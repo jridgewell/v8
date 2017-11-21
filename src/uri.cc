@@ -369,6 +369,16 @@ MaybeHandle<String> Uri::Encode(Isolate* isolate, Handle<String> uri,
 
 namespace {  // Anonymous namespace for Escape and Unescape
 
+int TwoDigitHex(uc16 character1, uc16 character2) {
+  if (character1 > 'f') return -1;
+  int high = HexValue(character1);
+  if (high == -1) return -1;
+  if (character2 > 'f') return -1;
+  int low = HexValue(character2);
+  if (low == -1) return -1;
+  return (high << 4) + low;
+}
+
 template <typename Char>
 int UnescapeChar(Vector<const Char> vector, int i, int length, int* step) {
   uint16_t character = vector[i];
