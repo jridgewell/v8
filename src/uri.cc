@@ -132,7 +132,7 @@ uc32 Utf8Decode(const uc32 codep, const uint8_t byte, uint8_t *state) {
   return (codep << 6) | (byte & kUtf8Data[364 + type]);
 }
 
-size_t DecodePercents(const bool is_uri, Vector<uc16> encoded) {
+size_t DecodePercents(const bool is_uri, Vector<uc16> *encoded) {
   // The state of the buffer.
   const size_t length = encoded->size();
   const uc16 *begin = encoded->begin();
@@ -239,7 +239,7 @@ MaybeHandle<String> Uri::Decode(Isolate* isolate, Handle<String> uri,
       ? uri_content->ToOneByteVector()
       : uri_content->ToUC16Vector(), uri_length);
 
-  size_t decoded_length = DecodePercents(is_uri, encoded);
+  size_t decoded_length = DecodePercents(is_uri, &encoded);
 
   // This is impossible when decoding proper escapes, and is reserved to signal
   // that an invalid escape sequence was encountered.
