@@ -88,8 +88,8 @@ uc16 *ShiftChars(uc16 *dest, uc16 *src, size_t n) {
  * Copyright (c) 2008-2009 Bjoern Hoehrmann <bjoern@hoehrmann.de>
  * See http://bjoern.hoehrmann.de/utf-8/decoder/dfa/ for details.
  */
-constexpr kUtf8Accept = 12;
-constexpr kUtf8Reject = 0;
+constexpr uint8_t kUtf8Accept = 12;
+constexpr uint8_t kUtf8Reject = 0;
 uc32 Utf8Decode(const uc32 codep, const uint8_t byte, uint8_t *state) {
   static constexpr uint8_t kUtf8Data[] = {
       // The first part of the table maps character byte to a transition.
@@ -132,10 +132,10 @@ uc32 Utf8Decode(const uc32 codep, const uint8_t byte, uint8_t *state) {
   return (codep << 6) | (byte & kUtf8Data[364 + type]);
 }
 
-size_t DecodePercents(const bool is_uri, Vector<uc16> *encoded) {
+size_t DecodePercents(const bool is_uri, std::vector<uc16> *encoded) {
   // The state of the buffer.
   const size_t length = encoded->size();
-  const uc16 *begin = encoded->begin();
+  uc16 * const begin = encoded->begin();
 
   // The end of the buffer, used for simple out-of-bounds checking.
   const uc16 *end = encoded->end();
@@ -234,10 +234,12 @@ MaybeHandle<String> Uri::Decode(Isolate* isolate, Handle<String> uri,
   DisallowHeapAllocation no_gc;
   uri = String::Flatten(uri);
   size_t uri_length = uri->length();
-  String::FlatContent uri_content = uri->GetFlatContent();
-  Vector<uc16> encoded = Vector(uri_content->IsOneByte()
+  String::FlatContent flat_content = uri->GetFlatContent();
+  Vector<uc16> uri_content = Vector(uri_content->IsOneByte()
       ? uri_content->ToOneByteVector()
       : uri_content->ToUC16Vector(), uri_length);
+  std::vector<uc16> encoded = std::vector(uri_content->begin(),
+      uri_content->end());
 
   size_t decoded_length = DecodePercents(is_uri, &encoded);
 
@@ -253,7 +255,8 @@ MaybeHandle<String> Uri::Decode(Isolate* isolate, Handle<String> uri,
     return uri;
   }
 
-  Vector<uc16> decoded = encoded->SubVector(0, decoded_length);
+  Vector<uc16> decoded = Vector<const uc16>(encoded.data(),
+      static_cast<int>(decoded_length))
   return isolate->factory()->NewStringFromTwoByte(decoded);
 }
 
