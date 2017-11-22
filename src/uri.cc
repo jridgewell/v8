@@ -6,6 +6,7 @@
 
 #include <vector>
 
+#include "src/allocation.h"
 #include "src/char-predicates-inl.h"
 #include "src/handles.h"
 #include "src/isolate-inl.h"
@@ -16,7 +17,7 @@ namespace v8 {
 namespace internal {
 
 namespace {  // anonymous namespace for DecodeURI helper functions
-bool IsReservedPredicate(uc16 c) {
+bool IsReservedPredicate(const uc16 c) {
   switch (c) {
     case '#':
     case '$':
@@ -35,171 +36,274 @@ bool IsReservedPredicate(uc16 c) {
   }
 }
 
-bool IsReplacementCharacter(const uint8_t* octets, int length) {
-  // The replacement character is at codepoint U+FFFD in the Unicode Specials
-  // table. Its UTF-8 encoding is 0xEF 0xBF 0xBD.
-  if (length != 3 || octets[0] != 0xef || octets[1] != 0xbf ||
-      octets[2] != 0xbd) {
-    return false;
-  }
-  return true;
-}
 
-bool DecodeOctets(const uint8_t* octets, int length,
-                  std::vector<uc16>* buffer) {
-  size_t cursor = 0;
-  uc32 value = unibrow::Utf8::ValueOf(octets, length, &cursor);
-  if (value == unibrow::Utf8::kBadChar &&
-      !IsReplacementCharacter(octets, length)) {
-    return false;
-  }
-
-  if (value <= static_cast<uc32>(unibrow::Utf16::kMaxNonSurrogateCharCode)) {
-    buffer->push_back(value);
-  } else {
-    buffer->push_back(unibrow::Utf16::LeadSurrogate(value));
-    buffer->push_back(unibrow::Utf16::TrailSurrogate(value));
-  }
-  return true;
-}
-
-int TwoDigitHex(uc16 character1, uc16 character2) {
-  if (character1 > 'f') return -1;
-  int high = HexValue(character1);
-  if (high == -1) return -1;
-  if (character2 > 'f') return -1;
-  int low = HexValue(character2);
-  if (low == -1) return -1;
-  return (high << 4) + low;
-}
-
-template <typename T>
-void AddToBuffer(uc16 decoded, String::FlatContent* uri_content, int index,
-                 bool is_uri, std::vector<T>* buffer) {
-  if (is_uri && IsReservedPredicate(decoded)) {
-    buffer->push_back('%');
-    uc16 first = uri_content->Get(index + 1);
-    uc16 second = uri_content->Get(index + 2);
-    DCHECK_GT(std::numeric_limits<T>::max(), first);
-    DCHECK_GT(std::numeric_limits<T>::max(), second);
-
-    buffer->push_back(first);
-    buffer->push_back(second);
-  } else {
-    buffer->push_back(decoded);
-  }
-}
-
-bool IntoTwoByte(int index, bool is_uri, int uri_length,
-                 String::FlatContent* uri_content, std::vector<uc16>* buffer) {
-  for (int k = index; k < uri_length; k++) {
-    uc16 code = uri_content->Get(k);
-    if (code == '%') {
-      int two_digits;
-      if (k + 2 >= uri_length ||
-          (two_digits = TwoDigitHex(uri_content->Get(k + 1),
-                                    uri_content->Get(k + 2))) < 0) {
-        return false;
-      }
-      k += 2;
-      uc16 decoded = static_cast<uc16>(two_digits);
-      if (decoded > unibrow::Utf8::kMaxOneByteChar) {
-        uint8_t octets[unibrow::Utf8::kMaxEncodedSize];
-        octets[0] = decoded;
-
-        int number_of_continuation_bytes = 0;
-        while ((decoded << ++number_of_continuation_bytes) & 0x80) {
-          if (number_of_continuation_bytes > 3 || k + 3 >= uri_length) {
-            return false;
-          }
-          if (uri_content->Get(++k) != '%' ||
-              (two_digits = TwoDigitHex(uri_content->Get(k + 1),
-                                        uri_content->Get(k + 2))) < 0) {
-            return false;
-          }
-          k += 2;
-          uc16 continuation_byte = static_cast<uc16>(two_digits);
-          octets[number_of_continuation_bytes] = continuation_byte;
-        }
-
-        if (!DecodeOctets(octets, number_of_continuation_bytes, buffer)) {
-          return false;
-        }
-      } else {
-        AddToBuffer(decoded, uri_content, k - 2, is_uri, buffer);
-      }
-    } else {
-      buffer->push_back(code);
+/**
+ * The equivalent of std::find, but without the iterators.
+ */
+uint16_t *Find(const uint16_t *str, const uint16_t *const end,
+    const uint16_t c) {
+  while (*str != c) {
+    if (++str >= end) {
+      return const_cast<uint16_t *>(end);
     }
   }
-  return true;
+  return const_cast<uint16_t *>(str);
 }
 
-bool IntoOneAndTwoByte(Handle<String> uri, bool is_uri,
-                       std::vector<uint8_t>* one_byte_buffer,
-                       std::vector<uc16>* two_byte_buffer) {
-  DisallowHeapAllocation no_gc;
-  String::FlatContent uri_content = uri->GetFlatContent();
+/**
+ * Decodes a single hex char into it's equivalent decimal value.
+ * The value is then left shifted by `shift`.
+ * If an invalid hex char is encountered, this returns `255`, which is guaranteed
+ * to be rejected by the decoder FSM later on.
+ */
+uint8_t HexCharToInt(const uc16 c, const uint8_t shift) {
+  switch (c) {
+    case '0':
+    case '1':
+    case '2':
+    case '3':
+    case '4':
+    case '5':
+    case '6':
+    case '7':
+    case '8':
+    case '9':
+      return (c - '0') << shift;
+    case 'A':
+    case 'B':
+    case 'C':
+    case 'D':
+    case 'E':
+    case 'F':
+      return (c - 'A' + 10) << shift;
+    case 'a':
+    case 'b':
+    case 'c':
+    case 'd':
+    case 'e':
+    case 'f':
+      return (c - 'a' + 10) << shift;
+    default:
+      return 255;
+  }
+}
 
-  int uri_length = uri->length();
-  for (int k = 0; k < uri_length; k++) {
-    uc16 code = uri_content.Get(k);
-    if (code == '%') {
-      int two_digits;
-      if (k + 2 >= uri_length ||
-          (two_digits = TwoDigitHex(uri_content.Get(k + 1),
-                                    uri_content.Get(k + 2))) < 0) {
-        return false;
-      }
+/**
+ * Shifts the "normal" characters from there current location in the string buffer
+ * to the current decoded index. This is necessary because, as we decode percent-encoded
+ * values, we take up less space.
+ */
+uc16 *ShiftChars(uc16 *dest, uc16 *src, size_t n) {
+  if (dest < src) {
+    MemMove(dest, src, n * sizeof(uc16));
+  }
+  return dest + n;
+}
 
-      uc16 decoded = static_cast<uc16>(two_digits);
-      if (decoded > unibrow::Utf8::kMaxOneByteChar) {
-        return IntoTwoByte(k, is_uri, uri_length, &uri_content,
-                           two_byte_buffer);
-      }
+/**
+ * The below algorithm is based on Bjoern Hoehrmann's DFA Unicode Decoder.
+ * Copyright (c) 2008-2009 Bjoern Hoehrmann <bjoern@hoehrmann.de>
+ * See http://bjoern.hoehrmann.de/utf-8/decoder/dfa/ for details.
+ */
+constexpr uint8_t kUtf8Accept = 12;
+constexpr uint8_t kUtf8Reject = 0;
+uc32 Utf8Decode(const uc32 codep, const uint8_t byte, uint8_t *const state) {
+  static constexpr uint8_t kUtf8Data[] = {
+      // The first part of the table maps character byte to a transition.
+       0, 0, 0, 0,  0, 0, 0, 0,   0, 0, 0, 0, 0, 0, 0, 0,
+       0, 0, 0, 0,  0, 0, 0, 0,   0, 0, 0, 0, 0, 0, 0, 0,
+       0, 0, 0, 0,  0, 0, 0, 0,   0, 0, 0, 0, 0, 0, 0, 0,
+       0, 0, 0, 0,  0, 0, 0, 0,   0, 0, 0, 0, 0, 0, 0, 0,
+       0, 0, 0, 0,  0, 0, 0, 0,   0, 0, 0, 0, 0, 0, 0, 0,
+       0, 0, 0, 0,  0, 0, 0, 0,   0, 0, 0, 0, 0, 0, 0, 0,
+       0, 0, 0, 0,  0, 0, 0, 0,   0, 0, 0, 0, 0, 0, 0, 0,
+       0, 0, 0, 0,  0, 0, 0, 0,   0, 0, 0, 0, 0, 0, 0, 0,
+       1, 1, 1, 1,  1, 1, 1, 1,   1, 1, 1, 1, 1, 1, 1, 1,
+       2, 2, 2, 2,  2, 2, 2, 2,   2, 2, 2, 2, 2, 2, 2, 2,
+       3, 3, 3, 3,  3, 3, 3, 3,   3, 3, 3, 3, 3, 3, 3, 3,
+       3, 3, 3, 3,  3, 3, 3, 3,   3, 3, 3, 3, 3, 3, 3, 3,
+       4, 4, 5, 5,  5, 5, 5, 5,   5, 5, 5, 5, 5, 5, 5, 5,
+       5, 5, 5, 5,  5, 5, 5, 5,   5, 5, 5, 5, 5, 5, 5, 5,
+       6, 7, 7, 7,  7, 7, 7, 7,   7, 7, 7, 7, 7, 8, 7, 7,
+      10, 9, 9, 9, 11, 4, 4, 4,   4, 4, 4, 4, 4, 4, 4, 4,
 
-      AddToBuffer(decoded, &uri_content, k, is_uri, one_byte_buffer);
-      k += 2;
-    } else {
-      if (code > unibrow::Utf8::kMaxOneByteChar) {
-        return IntoTwoByte(k, is_uri, uri_length, &uri_content,
-                           two_byte_buffer);
-      }
-      one_byte_buffer->push_back(code);
+      // The second part of the table maps a state to a new state when adding a
+      // transition.
+       0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+      12,  0,  0,  0,  0, 24, 36, 48, 60, 72, 84, 96,
+       0, 12, 12, 12,  0,  0,  0,  0,  0,  0,  0,  0,
+       0,  0,  0, 24,  0,  0,  0,  0,  0,  0,  0,  0,
+       0, 24, 24, 24,  0,  0,  0,  0,  0,  0,  0,  0,
+       0, 24, 24,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+       0, 48, 48, 48,  0,  0,  0,  0,  0,  0,  0,  0,
+       0,  0, 48, 48,  0,  0,  0,  0,  0,  0,  0,  0,
+       0, 48,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+
+      // The third part maps the current transition to a mask that needs to
+      // apply to the byte.
+      0x7F, 0x3F, 0x3F, 0x3F, 0x00, 0x1F, 0x0F, 0x0F, 0x0F, 0x07, 0x07, 0x07,
+  };
+  uint8_t type = kUtf8Data[byte];
+
+  *state = kUtf8Data[256 + *state + type];
+  return (codep << 6) | (byte & kUtf8Data[364 + type]);
+}
+
+size_t DecodePercents(const bool is_uri, const size_t length, uc16 *encoded,
+    uint32_t *two_byte) {
+  const uc16 *const begin = encoded;
+  const uc16 *const end = begin + length;
+
+  // The current octet that we are decoding.
+  uc16 *k = Find(encoded, end, '%');
+
+  // The position of the first octet in this series.
+  uc16 *start_of_octets = k;
+
+  // The position of the first character after the last decoded octet.
+  // Everything from this point on (up to the start of the escape sequence)
+  // will need to be moved leftwards to the insertion point if a new valid
+  // octet series is encountered.
+  uc16 *start_of_chars = encoded;
+
+  // The current "insertion" pointer, where we move our decoded and normal
+  // characters.
+  uc16 *insertion = encoded;
+
+  // The current octet series' accumulated code point.
+  uc32 codepoint = 0;
+
+  // The state of the decoding FSM.
+  uint8_t state = kUtf8Accept;
+
+  // If k goes beyond end-2, there's no way we can encounter another valid
+  // percent encoded octet.
+  while (k < end - 2) {
+    // The character at k is always a '%', guaranteed by the Find.
+    // So, interpret the hex chars as a single value.
+    const uint8_t high = HexCharToInt(*(k + 1), 4);
+    const uint8_t low = HexCharToInt(*(k + 2), 0);
+    // If either is not a valid hex char, the result will be `255`, making
+    // their OR 255, and making the FSM reject (255 is always an invalid byte).
+    // Otherwise, this will transition `state` into the next.
+    codepoint = Utf8Decode(codepoint, high | low, &state);
+
+    switch (state) {
+      case kUtf8Accept:
+        // A full codepoint has been found!
+
+        // If we this codepoint is a reserved char (decodeURI), pretend we
+        // never saw it.
+        if (!is_uri || !IsReservedPredicate(codepoint)) {
+          // We first need to shift any characters leftwards, if any codepoints
+          // have been found previously (since they decode into fewer
+          // characters).
+          insertion = ShiftChars(insertion, start_of_chars,
+              start_of_octets - start_of_chars);
+
+          // Push either a single character, or a surrogate character.
+          if (codepoint <= 0xFFFF) {
+            *insertion++ = codepoint;
+          } else {
+            *insertion++ = (0xD7C0 + (codepoint >> 10));
+            *insertion++ = (0xDC00 + (codepoint & 0x3FF));
+          }
+
+          // Make two_byte non-zero if codepoint >= 128.
+          *two_byte |= codepoint >> 7;
+
+          // Now, the first char after this escape is the next start_of_chars.
+          start_of_chars = k + 3;
+        }
+
+        // Find our next '%', and reset the accumulated code point.
+        k = start_of_octets = Find(start_of_chars, end, '%');
+        codepoint = 0;
+        break;
+
+      default:
+        // We're in the middle of a multi-octet series.
+        // Move to the next octet.
+        k += 3;
+        // If we find a '%', break out and continue with the loop.
+        // Otherwise, we've encountered an invalid octet series, and need to
+        // reject.
+        if (k < end - 2 && *k == '%') {
+          break;
+        }
+
+      // Intentional fall-through
+      case kUtf8Reject:
+        // Either a bad escape, or we're missing continuation bytes.
+        return 0;
     }
   }
-  return true;
+
+  if (k < end) {
+    // Bad decode, since the % char was wasn't followed by two hex chars.
+    return 0;
+  } else if (insertion == begin) {
+    // No escape sequences
+    return length;
+  }
+
+  // Finally, if there are any normal characters after the last decoded octets,
+  // we need to shift them leftwards.
+  insertion = ShiftChars(insertion, start_of_chars, end - start_of_chars);
+
+  // Return the total length of decoded string.
+  return insertion - begin;
 }
 
 }  // anonymous namespace
 
 MaybeHandle<String> Uri::Decode(Isolate* isolate, Handle<String> uri,
                                 bool is_uri) {
+  DisallowHeapAllocation no_gc;
   uri = String::Flatten(uri);
-  std::vector<uint8_t> one_byte_buffer;
-  std::vector<uc16> two_byte_buffer;
+  size_t uri_length = uri->length();
+  String::FlatContent flat_content = uri->GetFlatContent();
 
-  if (!IntoOneAndTwoByte(uri, is_uri, &one_byte_buffer, &two_byte_buffer)) {
+  uc16 *encoded = NewArray<uc16>(uri_length);
+  uint32_t two_byte = !flat_content.IsOneByte();
+
+  if (two_byte) {
+    CopyChars(encoded, flat_content.ToUC16Vector().begin(), uri_length);
+  } else {
+    CopyChars(encoded, flat_content.ToOneByteVector().begin(), uri_length);
+  }
+
+  size_t decoded_length = DecodePercents(is_uri, uri_length, encoded,
+      &two_byte);
+
+  // If there are no percent encodings, we the "decoded" string is the same
+  // length as the encoded. In that case, just return the original string.
+  if (decoded_length == uri_length) {
+    DeleteArray(encoded);
+    return uri;
+  }
+
+  // Now that we know decoded length is not the encoded length, we can check
+  // that there is a decoded length. If an invalid sequence is encountered,
+  // we the length will be zero.
+  // This check needs to happen after checking if decoded and encoded lengths
+  // are the same, so that we don't incorrectly throw for an empty string.
+  if (decoded_length == 0) {
+    DeleteArray(encoded);
     THROW_NEW_ERROR(isolate, NewURIError(), String);
   }
 
-  if (two_byte_buffer.empty()) {
-    return isolate->factory()->NewStringFromOneByte(Vector<const uint8_t>(
-        one_byte_buffer.data(), static_cast<int>(one_byte_buffer.size())));
+  if (two_byte) {
+    uc16 *str = NewArray<uc16>(decoded_length);
+    CopyChars(str, encoded, decoded_length);
+    return isolate->factory()->NewStringFromTwoByte(
+        Vector<const uc16>(str, decoded_length));
+  } else {
+    uint8_t *str = NewArray<uint8_t>(decoded_length);
+    CopyChars(str, encoded, decoded_length);
+    return isolate->factory()->NewStringFromOneByte(
+        Vector<const uint8_t>(str, decoded_length));
   }
-
-  Handle<SeqTwoByteString> result;
-  int result_length =
-      static_cast<int>(one_byte_buffer.size() + two_byte_buffer.size());
-  ASSIGN_RETURN_ON_EXCEPTION(
-      isolate, result, isolate->factory()->NewRawTwoByteString(result_length),
-      String);
-
-  CopyChars(result->GetChars(), one_byte_buffer.data(), one_byte_buffer.size());
-  CopyChars(result->GetChars() + one_byte_buffer.size(), two_byte_buffer.data(),
-            two_byte_buffer.size());
-
-  return result;
 }
 
 namespace {  // anonymous namespace for EncodeURI helper functions
@@ -227,16 +331,16 @@ bool IsUnescapePredicateInUriComponent(uc16 c) {
 bool IsUriSeparator(uc16 c) {
   switch (c) {
     case '#':
-    case ':':
-    case ';':
-    case '/':
-    case '?':
     case '$':
     case '&':
     case '+':
     case ',':
-    case '@':
+    case '/':
+    case ':':
+    case ';':
     case '=':
+    case '?':
+    case '@':
       return true;
     default:
       return false;
@@ -313,6 +417,16 @@ MaybeHandle<String> Uri::Encode(Isolate* isolate, Handle<String> uri,
 }
 
 namespace {  // Anonymous namespace for Escape and Unescape
+
+int TwoDigitHex(uc16 character1, uc16 character2) {
+  if (character1 > 'f') return -1;
+  int high = HexValue(character1);
+  if (high == -1) return -1;
+  if (character2 > 'f') return -1;
+  int low = HexValue(character2);
+  if (low == -1) return -1;
+  return (high << 4) + low;
+}
 
 template <typename Char>
 int UnescapeChar(Vector<const Char> vector, int i, int length, int* step) {
