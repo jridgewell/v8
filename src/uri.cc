@@ -202,11 +202,11 @@ size_t DecodePercents(const bool is_uri, const size_t length, uc16 *encoded,
               start_of_octets - start_of_chars);
 
           // Push either a single character, or a surrogate character.
-          if (codepoint <= 0xFFFF) {
+          if (codepoint <= unibrow::Utf8::kMaxNonSurrogateCharCode) {
             *insertion++ = codepoint;
           } else {
-            *insertion++ = (0xD7C0 + (codepoint >> 10));
-            *insertion++ = (0xDC00 + (codepoint & 0x3FF));
+            *insertion++ = unibrow::Utf16::LeadSurrogate(codepoint);
+            *insertion++ = unibrow::Utf16::TrailSurrogate(codepoint);
           }
 
           // Make two_byte non-zero if codepoint >= 128.
@@ -239,11 +239,13 @@ size_t DecodePercents(const bool is_uri, const size_t length, uc16 *encoded,
     }
   }
 
+  // Bad decode, since the % char was wasn't followed by two hex chars.
   if (k < end) {
-    // Bad decode, since the % char was wasn't followed by two hex chars.
     return 0;
-  } else if (insertion == begin) {
-    // No escape sequences
+  }
+
+  // No escape sequences
+  if (insertion == begin) {
     return length;
   }
 
