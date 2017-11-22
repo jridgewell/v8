@@ -38,25 +38,12 @@ bool IsReservedPredicate(const uc16 c) {
 
 
 /**
- * The equivalent of std::find, but without the iterators.
- */
-uint16_t *Find(const uint16_t *str, const uint16_t *const end,
-    const uint16_t c) {
-  while (*str != c) {
-    if (++str >= end) {
-      return const_cast<uint16_t *>(end);
-    }
-  }
-  return const_cast<uint16_t *>(str);
-}
-
-/**
  * Decodes a single hex char into it's equivalent decimal value.
  * The value is then left shifted by `shift`.
  * If an invalid hex char is encountered, this returns `255`, which is guaranteed
  * to be rejected by the decoder FSM later on.
  */
-uint8_t HexCharToInt(const uc16 c, const uint8_t shift) {
+uint8_t HexCharToInt(const uc16 c, const uint8_t shift = 0) {
   switch (c) {
     case '0':
     case '1':
@@ -86,18 +73,6 @@ uint8_t HexCharToInt(const uc16 c, const uint8_t shift) {
     default:
       return 255;
   }
-}
-
-/**
- * Shifts the "normal" characters from there current location in the string buffer
- * to the current decoded index. This is necessary because, as we decode percent-encoded
- * values, we take up less space.
- */
-uc16 *ShiftChars(uc16 *dest, uc16 *src, size_t n) {
-  if (dest < src) {
-    MemMove(dest, src, n * sizeof(uc16));
-  }
-  return dest + n;
 }
 
 /**
@@ -149,26 +124,45 @@ uc32 Utf8Decode(const uc32 codep, const uint8_t byte, uint8_t *const state) {
   return (codep << 6) | (byte & kUtf8Data[364 + type]);
 }
 
-size_t DecodePercents(const bool is_uri, const size_t length, uc16 *encoded,
-    uint32_t *two_byte) {
-  const uc16 *const begin = encoded;
-  const uc16 *const end = begin + length;
+/**
+ * Shifts the "normal" characters from there current location in the string buffer
+ * to the current decoded index. This is necessary because, as we decode percent-encoded
+ * values, we take up less space.
+ */
+template <typename SourceChar, typename DestChar>
+static DestChar *ShiftChars(DestChar *dest, SourceChar *src, size_t n) {
+  CopyChars(dest, src, n);
+  return dest + n;
+}
+
+template <typename SourceChar, typename DestChar>
+static MaybeHandle<String> DecodeSlow(Isolate* isolate, Handle<String> uri,
+                                      bool is_uri, bool two_byte, size_t size) {
+  // TODO COMMENTS
+  Vector<const SourceChar> content = uri->GetCharVector<SourceChar>();
+  DestChar *decoded = NewArray<DestChar>(size);
+
+  StringSearch<uint8_t, SourceChar> search(isolate, STATIC_CHAR_VECTOR("%"));
+
+  const SourceChar *begin = content.begin();
+
+  int length = content.length();
 
   // The current octet that we are decoding.
-  uc16 *k = Find(encoded, end, '%');
+  int k = search.Search(content, 0);
 
   // The position of the first octet in this series.
-  uc16 *start_of_octets = k;
+  int start_of_octets = k;
 
   // The position of the first character after the last decoded octet.
   // Everything from this point on (up to the start of the escape sequence)
   // will need to be moved leftwards to the insertion point if a new valid
   // octet series is encountered.
-  uc16 *start_of_chars = encoded;
+  int start_of_chars = 0;
 
   // The current "insertion" pointer, where we move our decoded and normal
   // characters.
-  uc16 *insertion = encoded;
+  DestChar *insertion = decoded;
 
   // The current octet series' accumulated code point.
   uc32 codepoint = 0;
@@ -176,13 +170,14 @@ size_t DecodePercents(const bool is_uri, const size_t length, uc16 *encoded,
   // The state of the decoding FSM.
   uint8_t state = kUtf8Accept;
 
-  // If k goes beyond end-2, there's no way we can encounter another valid
-  // percent encoded octet.
-  while (k < end - 2) {
+  // Normally, we'd have to check for k < length - 2, but we've already
+  // done that check.
+  while (k >= 0) {
     // The character at k is always a '%', guaranteed by the Find.
     // So, interpret the hex chars as a single value.
-    const uint8_t high = HexCharToInt(*(k + 1), 4);
-    const uint8_t low = HexCharToInt(*(k + 2), 0);
+    uint8_t high = HexCharToInt(content[k + 1], 4);
+    uint8_t low = HexCharToInt(content[k + 2], 0);
+
     // If either is not a valid hex char, the result will be `255`, making
     // their OR 255, and making the FSM reject (255 is always an invalid byte).
     // Otherwise, this will transition `state` into the next.
@@ -194,30 +189,33 @@ size_t DecodePercents(const bool is_uri, const size_t length, uc16 *encoded,
 
         // If we this codepoint is a reserved char (decodeURI), pretend we
         // never saw it.
-        if (!is_uri || !IsReservedPredicate(codepoint)) {
+        if (is_uri && IsReservedPredicate(codepoint)) {
+          // Find our next '%', after this sequence
+          k = search.Search(content, k + 3);
+        } else {
           // We first need to shift any characters leftwards, if any codepoints
           // have been found previously (since they decode into fewer
           // characters).
-          insertion = ShiftChars(insertion, start_of_chars,
+          insertion = ShiftChars(insertion, begin + start_of_chars,
               start_of_octets - start_of_chars);
 
           // Push either a single character, or a surrogate character.
-          if (codepoint <= unibrow::Utf8::kMaxNonSurrogateCharCode) {
+          if (codepoint <= static_cast<uc32>(
+                unibrow::Utf16::kMaxNonSurrogateCharCode)) {
             *insertion++ = codepoint;
           } else {
             *insertion++ = unibrow::Utf16::LeadSurrogate(codepoint);
             *insertion++ = unibrow::Utf16::TrailSurrogate(codepoint);
           }
 
-          // Make two_byte non-zero if codepoint > 255.
-          *two_byte |= codepoint >> 8;
-
           // Now, the first char after this escape is the next start_of_chars.
           start_of_chars = k + 3;
+
+          // Find our next '%', after this sequence
+          k = search.Search(content, start_of_chars);
         }
 
-        // Find our next '%', and reset the accumulated code point.
-        k = start_of_octets = Find(start_of_chars, end, '%');
+        start_of_octets = k;
         codepoint = 0;
         break;
 
@@ -228,84 +226,109 @@ size_t DecodePercents(const bool is_uri, const size_t length, uc16 *encoded,
         // If we find a '%', break out and continue with the loop.
         // Otherwise, we've encountered an invalid octet series, and need to
         // reject.
-        if (k < end - 2 && *k == '%') {
+        if (k < length && content[k] == '%') {
           break;
         }
 
       // Intentional fall-through
       case kUtf8Reject:
-        // Either a bad escape, or we're missing continuation bytes.
-        return 0;
+        DeleteArray(decoded);
+        THROW_NEW_ERROR(isolate, NewURIError(), String);
     }
-  }
-
-  // Bad decode, since the % char was wasn't followed by two hex chars.
-  if (k < end) {
-    return 0;
-  }
-
-  // No escape sequences
-  if (insertion == begin) {
-    return length;
   }
 
   // Finally, if there are any normal characters after the last decoded octets,
   // we need to shift them leftwards.
-  insertion = ShiftChars(insertion, start_of_chars, end - start_of_chars);
+  ShiftChars(insertion, begin + start_of_chars,
+      length - start_of_chars);
 
-  // Return the total length of decoded string.
-  return insertion - begin;
+  if (two_byte) {
+    return isolate->factory()->NewStringFromTwoByte(Vector<const uc16>(
+          reinterpret_cast<uc16 *>(decoded), size));
+  } else {
+    return isolate->factory()->NewStringFromOneByte(Vector<const uint8_t>(
+          reinterpret_cast<uint8_t *>(decoded), size));
+  }
+}
+
+template <typename Char>
+static MaybeHandle<String> DecodePrivate(Isolate* isolate, Handle<String> uri,
+                                         bool is_uri, bool two_byte) {
+  size_t size;
+
+  {
+    DisallowHeapAllocation no_allocation;
+    StringSearch<uint8_t, Char> search(isolate, STATIC_CHAR_VECTOR("%"));
+
+    Vector<const Char> content = uri->GetCharVector<Char>();
+    size = content.size();
+
+    int index = search.Search(content, 0);
+
+    // If there are no percents to decode, we can early return.
+    if (index < 0) {
+      return uri;
+    }
+
+    int length = content.length();
+    while (index >= 0 && index < length - 2) {
+      uint8_t codepoint = HexCharToInt(content[index + 1], 4) |
+        HexCharToInt(content[index + 2]);
+
+      // If the lead codepoint of 0xC4 or greater is guaranteed to give a two
+      // byte character (if the escapes are valid).
+
+      if (is_uri && IsReservedPredicate(codepoint)) {
+        index += 3;
+      } else {
+        if (codepoint < 0x80) {
+          index += 3;
+          size -= 2;
+        } else if (codepoint < 0xE0) {
+          two_byte = two_byte || codepoint > 0xC4;
+          index += 6;
+          size -= 5;
+        } else if (codepoint < 0xF0) {
+          two_byte = true;
+          index += 9;
+          size -= 8;
+        } else {
+          two_byte = true;
+          index += 12;
+          size -= 10;
+        }
+      }
+
+      index = search.Search(content, index);
+    }
+
+    // '%' in the last 2 chars is an easily detectable early error,
+    // and it cleans up logic further down.
+    if (index >= 0) {
+      THROW_NEW_ERROR(isolate, NewURIError(), String);
+    }
+
+    // If we "decoded" only reserved chars, we can early return.
+    if (size == content.size()) {
+      return uri;
+    }
+  }
+
+  if (two_byte) {
+    return DecodeSlow<Char, uc16>(isolate, uri, is_uri, two_byte, size);
+  } else {
+    return DecodeSlow<Char, uint8_t>(isolate, uri, is_uri, two_byte, size);
+  }
 }
 
 }  // anonymous namespace
 
 MaybeHandle<String> Uri::Decode(Isolate* isolate, Handle<String> uri,
                                 bool is_uri) {
-  DisallowHeapAllocation no_gc;
   uri = String::Flatten(uri);
-  size_t uri_length = uri->length();
-  String::FlatContent flat_content = uri->GetFlatContent();
-
-  uc16 *encoded = NewArray<uc16>(uri_length);
-  uint32_t two_byte = !flat_content.IsOneByte();
-
-  if (two_byte) {
-    CopyChars(encoded, flat_content.ToUC16Vector().begin(), uri_length);
-  } else {
-    CopyChars(encoded, flat_content.ToOneByteVector().begin(), uri_length);
-  }
-
-  size_t decoded_length = DecodePercents(is_uri, uri_length, encoded,
-      &two_byte);
-
-  // If there are no percent encodings, we the "decoded" string is the same
-  // length as the encoded. In that case, just return the original string.
-  if (decoded_length == uri_length) {
-    DeleteArray(encoded);
-    return uri;
-  }
-
-  // Now that we know decoded length is not the encoded length, we can check
-  // that there is a decoded length. If an invalid sequence is encountered,
-  // we the length will be zero.
-  // This check needs to happen after checking if decoded and encoded lengths
-  // are the same, so that we don't incorrectly throw for an empty string.
-  if (decoded_length == 0) {
-    DeleteArray(encoded);
-    THROW_NEW_ERROR(isolate, NewURIError(), String);
-  }
-
-  if (two_byte) {
-    uc16 *str = NewArray<uc16>(decoded_length);
-    CopyChars(str, encoded, decoded_length);
-    return isolate->factory()->NewStringFromTwoByte(
-        Vector<const uc16>(str, decoded_length));
-  } else {
-    uint8_t *str = NewArray<uint8_t>(decoded_length);
-    CopyChars(str, encoded, decoded_length);
-    return isolate->factory()->NewStringFromOneByte(
-        Vector<const uint8_t>(str, decoded_length));
-  }
+  return uri->IsOneByteRepresentationUnderneath()
+             ? DecodePrivate<uint8_t>(isolate, uri, is_uri, false)
+             : DecodePrivate<uc16>(isolate, uri, is_uri, true);
 }
 
 namespace {  // anonymous namespace for EncodeURI helper functions
@@ -607,7 +630,6 @@ static MaybeHandle<String> EscapePrivate(Isolate* isolate,
 }  // Anonymous namespace
 
 MaybeHandle<String> Uri::Escape(Isolate* isolate, Handle<String> string) {
-  Handle<String> result;
   string = String::Flatten(string);
   return string->IsOneByteRepresentationUnderneath()
              ? EscapePrivate<uint8_t>(isolate, string)
@@ -615,7 +637,6 @@ MaybeHandle<String> Uri::Escape(Isolate* isolate, Handle<String> string) {
 }
 
 MaybeHandle<String> Uri::Unescape(Isolate* isolate, Handle<String> string) {
-  Handle<String> result;
   string = String::Flatten(string);
   return string->IsOneByteRepresentationUnderneath()
              ? UnescapePrivate<uint8_t>(isolate, string)
