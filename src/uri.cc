@@ -209,8 +209,8 @@ size_t DecodePercents(const bool is_uri, const size_t length, uc16 *encoded,
             *insertion++ = unibrow::Utf16::TrailSurrogate(codepoint);
           }
 
-          // Make two_byte non-zero if codepoint >= 128.
-          *two_byte |= codepoint >> 7;
+          // Make two_byte non-zero if codepoint > 255.
+          *two_byte |= codepoint >> 8;
 
           // Now, the first char after this escape is the next start_of_chars.
           start_of_chars = k + 3;
