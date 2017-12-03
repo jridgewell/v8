@@ -203,7 +203,9 @@ class Utf8ExternalStreamingStream : public BufferedUtf16CharacterStream {
   Utf8ExternalStreamingStream(
       ScriptCompiler::ExternalSourceStream* source_stream,
       RuntimeCallStats* stats)
-      : current_({0, {0, 0, unibrow::Utf8::Utf8IncrementalBuffer(0)}}),
+      : current_({0,
+                  {0, 0, unibrow::Utf8::Utf8IncrementalBuffer(0),
+                   unibrow::Utf8::State::kAccept}}),
         source_stream_(source_stream),
         stats_(stats) {}
   ~Utf8ExternalStreamingStream() override {
@@ -224,6 +226,7 @@ class Utf8ExternalStreamingStream : public BufferedUtf16CharacterStream {
     size_t bytes;
     size_t chars;
     unibrow::Utf8::Utf8IncrementalBuffer incomplete_char;
+    unibrow::Utf8::State state;
   };
 
   // Position contains a StreamPosition and the index of the chunk the position
@@ -268,13 +271,14 @@ bool Utf8ExternalStreamingStream::SkipToPosition(size_t position) {
   const Chunk& chunk = chunks_[current_.chunk_no];
   DCHECK(current_.pos.bytes >= chunk.start.bytes);
 
+  unibrow::Utf8::State state = chunk.start.state;
   unibrow::Utf8::Utf8IncrementalBuffer incomplete_char =
       chunk.start.incomplete_char;
   size_t it = current_.pos.bytes - chunk.start.bytes;
   size_t chars = chunk.start.chars;
   while (it < chunk.length && chars < position) {
-    unibrow::uchar t =
-        unibrow::Utf8::ValueOfIncremental(chunk.data[it], &incomplete_char);
+    unibrow::uchar t = unibrow::Utf8::ValueOfIncremental(chunk.data[it], &state,
+                                                         &incomplete_char);
     if (t == kUtf8Bom && current_.pos.chars == 0) {
       // BOM detected at beginning of the stream. Don't copy it.
     } else if (t != unibrow::Utf8::kIncomplete) {
@@ -287,6 +291,7 @@ bool Utf8ExternalStreamingStream::SkipToPosition(size_t position) {
   current_.pos.bytes += it;
   current_.pos.chars = chars;
   current_.pos.incomplete_char = incomplete_char;
+  current_.pos.state = state;
   current_.chunk_no += (it == chunk.length);
 
   return current_.pos.chars == position;
@@ -304,30 +309,35 @@ void Utf8ExternalStreamingStream::FillBufferFromCurrentChunk() {
   uint16_t* cursor = buffer_ + (buffer_end_ - buffer_start_);
   DCHECK_EQ(cursor, buffer_end_);
 
+  unibrow::Utf8::State state = current_.pos.state;
+  unibrow::Utf8::Utf8IncrementalBuffer incomplete_char =
+      current_.pos.incomplete_char;
+
   // If the current chunk is the last (empty) chunk we'll have to process
   // any left-over, partial characters.
   if (chunk.length == 0) {
     unibrow::uchar t =
-        unibrow::Utf8::ValueOfIncrementalFinish(&current_.pos.incomplete_char);
+        unibrow::Utf8::ValueOfIncrementalFinish(&state, &incomplete_char);
     if (t != unibrow::Utf8::kBufferEmpty) {
       DCHECK_LT(t, unibrow::Utf16::kMaxNonSurrogateCharCode);
       *cursor = static_cast<uc16>(t);
       buffer_end_++;
       current_.pos.chars++;
+      current_.pos.incomplete_char = incomplete_char;
+      current_.pos.state = state;
     }
     return;
   }
 
-  unibrow::Utf8::Utf8IncrementalBuffer incomplete_char =
-      current_.pos.incomplete_char;
   size_t it;
   for (it = current_.pos.bytes - chunk.start.bytes;
        it < chunk.length && cursor + 1 < buffer_start_ + kBufferSize; it++) {
-    unibrow::uchar t =
-        unibrow::Utf8::ValueOfIncremental(chunk.data[it], &incomplete_char);
-    if (t == unibrow::Utf8::kIncomplete) continue;
+    unibrow::uchar t = unibrow::Utf8::ValueOfIncremental(chunk.data[it], &state,
+                                                         &incomplete_char);
     if (V8_LIKELY(t < kUtf8Bom)) {
       *(cursor++) = static_cast<uc16>(t);  // The by most frequent case.
+    } else if (t == unibrow::Utf8::kIncomplete) {
+      continue;
     } else if (t == kUtf8Bom && current_.pos.bytes + it == 2) {
       // BOM detected at beginning of the stream. Don't copy it.
     } else if (t <= unibrow::Utf16::kMaxNonSurrogateCharCode) {
@@ -341,6 +351,7 @@ void Utf8ExternalStreamingStream::FillBufferFromCurrentChunk() {
   current_.pos.bytes = chunk.start.bytes + it;
   current_.pos.chars += (cursor - buffer_end_);
   current_.pos.incomplete_char = incomplete_char;
+  current_.pos.state = state;
   current_.chunk_no += (it == chunk.length);
 
   buffer_end_ = cursor;
@@ -405,7 +416,8 @@ void Utf8ExternalStreamingStream::SearchPosition(size_t position) {
       current_ = {chunk_no,
                   {chunks_[chunk_no].start.bytes + skip,
                    chunks_[chunk_no].start.chars + skip,
-                   unibrow::Utf8::Utf8IncrementalBuffer(0)}};
+                   unibrow::Utf8::Utf8IncrementalBuffer(0),
+                   unibrow::Utf8::State::kAccept}};
     } else {
       current_ = {chunk_no, chunks_[chunk_no].start};
       SkipToPosition(position);

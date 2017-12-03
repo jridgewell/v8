@@ -158,9 +158,21 @@ class V8_EXPORT_PRIVATE Utf8 {
   static inline uchar ValueOf(const byte* str, size_t length, size_t* cursor);
 
   typedef uint32_t Utf8IncrementalBuffer;
-  static uchar ValueOfIncremental(byte next_byte,
+  enum State : uint8_t {
+    kReject = 0,
+    kAccept = 12,
+    kTwoByte = 24,
+    kThreeByteHigh = 36,
+    kThreeByte = 48,
+    kThreeByteLow = 60,
+    kFourByte = 72,
+    kFourByteHigh = 84,
+    kFourByteLow = 96,
+  };
+  static uchar ValueOfIncremental(byte next_byte, State* state,
                                   Utf8IncrementalBuffer* buffer);
-  static uchar ValueOfIncrementalFinish(Utf8IncrementalBuffer* buffer);
+  static uchar ValueOfIncrementalFinish(State* state,
+                                        Utf8IncrementalBuffer* buffer);
 
   // Excludes non-characters from the set of valid code points.
   static inline bool IsValidCharacter(uchar c);
@@ -174,6 +186,10 @@ class V8_EXPORT_PRIVATE Utf8 {
   // - absence of surrogates,
   // - valid code point range.
   static bool ValidateEncoding(const byte* str, size_t length);
+
+ private:
+  static inline void DecodeUtf8Byte(byte next, State* state,
+                                    Utf8IncrementalBuffer* buffer);
 };
 
 struct Uppercase {

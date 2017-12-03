@@ -19,12 +19,14 @@ static int Ucs2CharLength(unibrow::uchar c) {
 
 static int Utf8LengthHelper(const char* s) {
   unibrow::Utf8::Utf8IncrementalBuffer buffer(unibrow::Utf8::kBufferEmpty);
+  unibrow::Utf8::State state = unibrow::Utf8::State::kAccept;
+
   int length = 0;
   for (; *s != '\0'; s++) {
-    unibrow::uchar tmp = unibrow::Utf8::ValueOfIncremental(*s, &buffer);
+    unibrow::uchar tmp = unibrow::Utf8::ValueOfIncremental(*s, &state, &buffer);
     length += Ucs2CharLength(tmp);
   }
-  unibrow::uchar tmp = unibrow::Utf8::ValueOfIncrementalFinish(&buffer);
+  unibrow::uchar tmp = unibrow::Utf8::ValueOfIncrementalFinish(&state, &buffer);
   length += Ucs2CharLength(tmp);
   return length;
 }
