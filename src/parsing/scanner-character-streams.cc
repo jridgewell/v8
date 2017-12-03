@@ -277,15 +277,14 @@ bool Utf8ExternalStreamingStream::SkipToPosition(size_t position) {
   size_t it = current_.pos.bytes - chunk.start.bytes;
   size_t chars = chunk.start.chars;
   while (it < chunk.length && chars < position) {
-    unibrow::uchar t = unibrow::Utf8::ValueOfIncremental(chunk.data[it], &state,
-                                                         &incomplete_char);
+    unibrow::uchar t = unibrow::Utf8::ValueOfIncremental(
+        chunk.data[it], &it, &state, &incomplete_char);
     if (t == kUtf8Bom && current_.pos.chars == 0) {
       // BOM detected at beginning of the stream. Don't copy it.
     } else if (t != unibrow::Utf8::kIncomplete) {
       chars++;
       if (t > unibrow::Utf16::kMaxNonSurrogateCharCode) chars++;
     }
-    it++;
   }
 
   current_.pos.bytes += it;
@@ -316,29 +315,27 @@ void Utf8ExternalStreamingStream::FillBufferFromCurrentChunk() {
   // If the current chunk is the last (empty) chunk we'll have to process
   // any left-over, partial characters.
   if (chunk.length == 0) {
-    unibrow::uchar t =
-        unibrow::Utf8::ValueOfIncrementalFinish(&state, &incomplete_char);
+    unibrow::uchar t = unibrow::Utf8::ValueOfIncrementalFinish(&state);
     if (t != unibrow::Utf8::kBufferEmpty) {
-      DCHECK_LT(t, unibrow::Utf16::kMaxNonSurrogateCharCode);
+      DCHECK_EQ(t, unibrow::Utf8::kBadChar);
       *cursor = static_cast<uc16>(t);
       buffer_end_++;
       current_.pos.chars++;
-      current_.pos.incomplete_char = incomplete_char;
+      current_.pos.incomplete_char = 0;
       current_.pos.state = state;
     }
     return;
   }
 
-  size_t it;
-  for (it = current_.pos.bytes - chunk.start.bytes;
-       it < chunk.length && cursor + 1 < buffer_start_ + kBufferSize; it++) {
-    unibrow::uchar t = unibrow::Utf8::ValueOfIncremental(chunk.data[it], &state,
-                                                         &incomplete_char);
+  size_t it = current_.pos.bytes - chunk.start.bytes;
+  while (it < chunk.length && cursor + 1 < buffer_start_ + kBufferSize) {
+    unibrow::uchar t = unibrow::Utf8::ValueOfIncremental(
+        chunk.data[it], &it, &state, &incomplete_char);
     if (V8_LIKELY(t < kUtf8Bom)) {
       *(cursor++) = static_cast<uc16>(t);  // The by most frequent case.
     } else if (t == unibrow::Utf8::kIncomplete) {
       continue;
-    } else if (t == kUtf8Bom && current_.pos.bytes + it == 2) {
+    } else if (t == kUtf8Bom && current_.pos.bytes + it == 3) {
       // BOM detected at beginning of the stream. Don't copy it.
     } else if (t <= unibrow::Utf16::kMaxNonSurrogateCharCode) {
       *(cursor++) = static_cast<uc16>(t);

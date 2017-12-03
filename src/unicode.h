@@ -169,10 +169,9 @@ class V8_EXPORT_PRIVATE Utf8 {
     kFourByteHigh = 84,
     kFourByteLow = 96,
   };
-  static uchar ValueOfIncremental(byte next_byte, State* state,
+  static uchar ValueOfIncremental(byte next_byte, size_t* cursor, State* state,
                                   Utf8IncrementalBuffer* buffer);
-  static uchar ValueOfIncrementalFinish(State* state,
-                                        Utf8IncrementalBuffer* buffer);
+  static uchar ValueOfIncrementalFinish(State* state);
 
   // Excludes non-characters from the set of valid code points.
   static inline bool IsValidCharacter(uchar c);

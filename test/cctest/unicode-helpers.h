@@ -22,11 +22,13 @@ static int Utf8LengthHelper(const char* s) {
   unibrow::Utf8::State state = unibrow::Utf8::State::kAccept;
 
   int length = 0;
-  for (; *s != '\0'; s++) {
-    unibrow::uchar tmp = unibrow::Utf8::ValueOfIncremental(*s, &state, &buffer);
+  size_t i = 0;
+  while (s[i] != '\0') {
+    unibrow::uchar tmp =
+        unibrow::Utf8::ValueOfIncremental(s[i], &i, &state, &buffer);
     length += Ucs2CharLength(tmp);
   }
-  unibrow::uchar tmp = unibrow::Utf8::ValueOfIncrementalFinish(&state, &buffer);
+  unibrow::uchar tmp = unibrow::Utf8::ValueOfIncrementalFinish(&state);
   length += Ucs2CharLength(tmp);
   return length;
 }

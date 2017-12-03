@@ -193,78 +193,23 @@ static int LookupMapping(const int32_t* table,
   }
 }
 
-static inline uint8_t NonASCIISequenceLength(byte first) {
-  // clang-format off
-  static const uint8_t lengths[256] = {
-      // The first 128 entries correspond to ASCII characters.
-      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,  /* 00 - 0f */
-      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,  /* 10 - 1f */
-      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,  /* 20 - 2f */
-      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,  /* 30 - 3f */
-      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,  /* 40 - 4f */
-      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,  /* 50 - 5f */
-      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,  /* 60 - 6f */
-      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,  /* 70 - 7f */
-      // The following 64 entries correspond to continuation bytes.
-      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,  /* 80 - 8f */
-      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,  /* 90 - 9f */
-      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,  /* a0 - af */
-      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,  /* b0 - bf */
-      // The next are two invalid overlong encodings and 30 two-byte sequences.
-      0, 0, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,  /* c0-c1 + c2-cf */
-      2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,  /* d0-df */
-      // 16 three-byte sequences.
-      3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3,  /* e0-ef */
-      // 5 four-byte sequences, followed by sequences that could only encode
-      // code points outside of the Unicode range.
-      4, 4, 4, 4, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}; /* f0-f4 + f5-ff */
-  // clang-format on
-  return lengths[first];
-}
-
-
-static inline bool IsContinuationCharacter(byte chr) {
-  return chr >= 0x80 && chr <= 0xBF;
-}
-
 // This method decodes an UTF-8 value according to RFC 3629 and
 // https://encoding.spec.whatwg.org/#utf-8-decoder .
 uchar Utf8::CalculateValue(const byte* str, size_t max_length, size_t* cursor) {
+  DCHECK_GT(max_length, 0);
   DCHECK_GT(str[0], kMaxOneByteChar);
 
-  size_t length = NonASCIISequenceLength(str[0]);
-  size_t max_count = std::min(length, max_length);
   State state = State::kAccept;
-  Utf8IncrementalBuffer code_point = 0;
+  Utf8IncrementalBuffer buffer = 0;
+  uchar t;
 
-  DecodeUtf8Byte(str[0], &state, &code_point);
-  // If the lead byte is invalid, move on.
-  if (V8_UNLIKELY(state == State::kReject)) {
-    *cursor += 1;
-    return kBadChar;
-  }
-
-  size_t i = 1;
-  while (i < max_count) {
-    DecodeUtf8Byte(str[i], &state, &code_point);
-
-    if (V8_UNLIKELY(state == State::kReject)) {
-      // If we hit an invalid byte, break _before_ incrementing `i`.
-      // That's because the maximal subpart ends at the first rejection, not
-      // after it.
-      break;
-    }
-
-    i++;
-  }
+  size_t i = 0;
+  do {
+    t = ValueOfIncremental(str[i], &i, &state, &buffer);
+  } while (i < max_length && t == kIncomplete);
 
   *cursor += i;
-  if (V8_LIKELY(state == kAccept)) {
-    return code_point;
-  }
-
-  // We're still in an incremental state.
-  return kBadChar;
+  return (state == State::kAccept) ? t : kBadChar;
 }
 
 // The below algorithm is based on Bjoern Hoehrmann's DFA Unicode Decoder.
@@ -354,131 +299,72 @@ void Utf8::DecodeUtf8Byte(byte next, State* state,
   *state = kUtf8States[*state + transition];
 }
 
-// Decodes UTF-8 bytes incrementally, allowing decoding of bytes as they stream
-// in. The caller **must** call ValueOfIncrementalFinish when the stream is done
-// to ensure any residual bytes in the buffer are processed.
-uchar Utf8::ValueOfIncremental(byte next, State* state,
+// Decodes UTF-8 bytes incrementally, allowing the decoding of bytes as they
+// stream in. This **must** be followed by a call to ValueOfIncrementalFinish
+// when the stream is complete, to ensure incomplete sequences are handled.
+uchar Utf8::ValueOfIncremental(byte next, size_t* cursor, State* state,
                                Utf8IncrementalBuffer* buffer) {
   DCHECK_NOT_NULL(buffer);
+  State old_state = *state;
+  *cursor += 1;
 
-  if (V8_LIKELY(next <= kMaxOneByteChar && *state == kAccept && *buffer == 0)) {
-    return static_cast<uchar>(next);
-  }
-
-  // We have one unprocessed byte left. This happens when an invalid byte is
-  // encountered inside a 2/3/4 byte sequence (after the lead byte).
-  if (*state == kAccept && *buffer > 0) {
-    uchar previous = *buffer;
-    *buffer = 0;
-
-    uchar t = ValueOfIncremental(previous, state, buffer);
-    if (t == kIncomplete) {
-      // If we have an incomplete character, process both the previous and the
-      // next byte at once.
-      return ValueOfIncremental(next, state, buffer);
-    }
-
-    // Otherwise, process the previous byte and save the next byte for next
-    // time.
+  if (V8_LIKELY(next <= kMaxOneByteChar && old_state == kAccept)) {
     DCHECK_EQ(0u, *buffer);
-    *buffer = next;
-    return t;
+    return static_cast<uchar>(next);
   }
 
   // So we're at the lead byte of a 2/3/4 sequence, or we're at a continuation
   // char in that sequence.
-  State old_state = *state;
   DecodeUtf8Byte(next, state, buffer);
 
-  if (*state == State::kAccept) {
-    uchar t = *buffer;
-    *buffer = 0;
-    return t;
-  }
-
-  if (*state == State::kReject) {
-    *state = State::kAccept;
-
-    // If we hit a bad byte, we need to determine if we were trying to start a
-    // sequence or continue one.
-    if (old_state == State::kAccept) {
-      // We were trying to start a sequence, but it's an invalid byte.
+  switch (*state) {
+    case State::kAccept: {
+      uchar t = *buffer;
       *buffer = 0;
-    } else {
-      // We were trying to continue a sequence, but the continuation is invalid.
-      // However, it may be a valid byte, so store it for the next call.
-      *buffer = next;
+      return t;
     }
 
-    return kBadChar;
-  }
+    case State::kReject:
+      *state = State::kAccept;
+      *buffer = 0;
 
-  return kIncomplete;
+      // If we hit a bad byte, we need to determine if we were trying to start
+      // a sequence or continue one. If we were trying to start a sequence,
+      // that means it's just an invalid lead byte and we need to continue to
+      // the next (which we already did above). If we were already in a
+      // sequence, we need to reprocess this same byte after resetting to the
+      // initial state.
+      if (old_state != State::kAccept) {
+        // We were trying to continue a sequence, so let's reprocess this byte
+        // next time.
+        *cursor -= 1;
+      }
+      return kBadChar;
+
+    default:
+      return kIncomplete;
+  }
 }
 
-// This finishes processing a UTF-8 byte stream, returning a residual byte if
-// one is in the buffer.
-uchar Utf8::ValueOfIncrementalFinish(State* state,
-                                     Utf8IncrementalBuffer* buffer) {
-  // TODO(jridgewell): There's a latent bug here that a null-byte can't be
-  // decoded...
-  if (*state == State::kAccept && *buffer == 0) {
+// Finishes the incremental decoding, ensuring that if an unfinished sequence
+// is left that it is replaced by a replacement char.
+uchar Utf8::ValueOfIncrementalFinish(State* state) {
+  if (*state == State::kAccept) {
     return kBufferEmpty;
+  } else {
+    DCHECK_GT(*state, State::kAccept);
+    *state = State::kAccept;
+    return kBadChar;
   }
-
-  uchar t = ValueOfIncremental(0, state, buffer);
-  *state = State::kAccept;
-  *buffer = 0;
-  return (t == kIncomplete) ? kBadChar : t;
 }
 
 bool Utf8::ValidateEncoding(const byte* bytes, size_t length) {
-  const byte* cursor = bytes;
-  const byte* end = bytes + length;
-
-  while (cursor < end) {
-    // Skip over single-byte values.
-    if (*cursor <= kMaxOneByteChar) {
-      ++cursor;
-      continue;
-    }
-
-    // Get the length the the character.
-    size_t seq_length = NonASCIISequenceLength(*cursor);
-    // For some invalid characters NonASCIISequenceLength returns 0.
-    if (seq_length == 0) return false;
-
-    const byte* char_end = cursor + seq_length;
-
-    // Return false if we do not have enough bytes for the character.
-    if (char_end > end) return false;
-
-    // Check if the bytes of the character are continuation bytes.
-    for (const byte* i = cursor + 1; i < char_end; ++i) {
-      if (!IsContinuationCharacter(*i)) return false;
-    }
-
-    // Check overly long sequences & other conditions.
-    if (seq_length == 3) {
-      if (cursor[0] == 0xE0 && (cursor[1] < 0xA0 || cursor[1] > 0xBF)) {
-        // Overlong three-byte sequence?
-        return false;
-      } else if (cursor[0] == 0xED && (cursor[1] < 0x80 || cursor[1] > 0x9F)) {
-        // High and low surrogate halves?
-        return false;
-      }
-    } else if (seq_length == 4) {
-      if (cursor[0] == 0xF0 && (cursor[1] < 0x90 || cursor[1] > 0xBF)) {
-        // Overlong four-byte sequence.
-        return false;
-      } else if (cursor[0] == 0xF4 && (cursor[1] < 0x80 || cursor[1] > 0x8F)) {
-        // Code points outside of the Unicode range.
-        return false;
-      }
-    }
-    cursor = char_end;
+  State state = State::kAccept;
+  Utf8IncrementalBuffer throw_away = 0;
+  for (size_t i = 0; i < length && state != State::kReject; i++) {
+    DecodeUtf8Byte(bytes[i], &state, &throw_away);
   }
-  return true;
+  return state == State::kAccept;
 }
 
 // Uppercase:            point.category == 'Lu'
