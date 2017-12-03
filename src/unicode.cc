@@ -193,25 +193,6 @@ static int LookupMapping(const int32_t* table,
   }
 }
 
-// This method decodes an UTF-8 value according to RFC 3629 and
-// https://encoding.spec.whatwg.org/#utf-8-decoder .
-uchar Utf8::CalculateValue(const byte* str, size_t max_length, size_t* cursor) {
-  DCHECK_GT(max_length, 0);
-  DCHECK_GT(str[0], kMaxOneByteChar);
-
-  State state = State::kAccept;
-  Utf8IncrementalBuffer buffer = 0;
-  uchar t;
-
-  size_t i = 0;
-  do {
-    t = ValueOfIncremental(str[i], &i, &state, &buffer);
-  } while (i < max_length && t == kIncomplete);
-
-  *cursor += i;
-  return (state == State::kAccept) ? t : kBadChar;
-}
-
 // The below algorithm is based on Bjoern Hoehrmann's DFA Unicode Decoder.
 // Copyright (c) 2008-2009 Bjoern Hoehrmann <bjoern@hoehrmann.de>
 // See http://bjoern.hoehrmann.de/utf-8/decoder/dfa/ for details.
@@ -297,6 +278,25 @@ void Utf8::DecodeUtf8Byte(byte next, State* state,
   const uint8_t transition = kUtf8Transitions[next];
   *buffer = (*buffer << 6) | (next & kUtf8Masks[transition]);
   *state = kUtf8States[*state + transition];
+}
+
+// This method decodes an UTF-8 value according to RFC 3629 and
+// https://encoding.spec.whatwg.org/#utf-8-decoder .
+uchar Utf8::CalculateValue(const byte* str, size_t max_length, size_t* cursor) {
+  DCHECK_GT(max_length, 0);
+  DCHECK_GT(str[0], kMaxOneByteChar);
+
+  State state = State::kAccept;
+  Utf8IncrementalBuffer buffer = 0;
+  uchar t;
+
+  size_t i = 0;
+  do {
+    t = ValueOfIncremental(str[i], &i, &state, &buffer);
+  } while (i < max_length && t == kIncomplete);
+
+  *cursor += i;
+  return (state == State::kAccept) ? t : kBadChar;
 }
 
 // Decodes UTF-8 bytes incrementally, allowing the decoding of bytes as they
