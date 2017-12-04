@@ -276,8 +276,8 @@ void Utf8::DecodeUtf8Byte(byte next, State* state,
   };
 
   const uint8_t transition = kUtf8Transitions[next];
-  *buffer = (*buffer << 6) | (next & kUtf8Masks[transition]);
   *state = kUtf8States[*state + transition];
+  *buffer = (*buffer << 6) | (next & kUtf8Masks[transition]);
 }
 
 // This method decodes an UTF-8 value according to RFC 3629 and
