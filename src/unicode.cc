@@ -308,7 +308,7 @@ uchar Utf8::ValueOfIncremental(byte next, size_t* cursor, State* state,
   State old_state = *state;
   *cursor += 1;
 
-  if (V8_LIKELY(next <= kMaxOneByteChar && old_state == kAccept)) {
+  if (V8_LIKELY(next <= kMaxOneByteChar && old_state == State::kAccept)) {
     DCHECK_EQ(0u, *buffer);
     return static_cast<uchar>(next);
   }
