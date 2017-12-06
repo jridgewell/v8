@@ -3494,26 +3494,30 @@ static inline void WriteTwoByteData(Vector<const char> vector, uint16_t* chars,
                                     int len) {
   const uint8_t* stream = reinterpret_cast<const uint8_t*>(vector.start());
   size_t stream_length = vector.length();
-  while (stream_length != 0) {
-    size_t consumed = 0;
-    uint32_t c = unibrow::Utf8::ValueOf(stream, stream_length, &consumed);
+  size_t cursor = 0;
+  uint32_t buffer = 0;
+  unibrow::Utf8::State state = unibrow::Utf8::State::kAccept;
+
+  while (cursor < stream_length) {
+    uint32_t c = unibrow::Utf8::ValueOfIncremental(stream[cursor], &cursor,
+                                                   &state, &buffer);
+    if (c == unibrow::Utf8::kIncomplete) continue;
+
     DCHECK_NE(unibrow::Utf8::kBadChar, c);
-    DCHECK(consumed <= stream_length);
-    stream_length -= consumed;
-    stream += consumed;
     if (c > unibrow::Utf16::kMaxNonSurrogateCharCode) {
+      DCHECK_GT(len, 1);
       len -= 2;
-      if (len < 0) break;
       *chars++ = unibrow::Utf16::LeadSurrogate(c);
       *chars++ = unibrow::Utf16::TrailSurrogate(c);
     } else {
+      DCHECK_GT(len, 0);
       len -= 1;
-      if (len < 0) break;
       *chars++ = c;
     }
   }
-  DCHECK_EQ(0, stream_length);
-  DCHECK_EQ(0, len);
+  DCHECK_NE(unibrow::Utf8::ValueOfIncrementalFinish(&state),
+            unibrow::Utf8::kBadChar);
+  DCHECK_EQ(len, 0);
 }
 
 
