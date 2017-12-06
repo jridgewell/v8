@@ -11896,24 +11896,34 @@ bool String::IsUtf8EqualTo(Vector<const char> str, bool allow_prefix_match) {
           str_len > slen*static_cast<int>(unibrow::Utf8::kMaxEncodedSize))) {
     return false;
   }
-  int i;
-  size_t remaining_in_str = static_cast<size_t>(str_len);
+
   const uint8_t* utf8_data = reinterpret_cast<const uint8_t*>(str.start());
-  for (i = 0; i < slen && remaining_in_str > 0; i++) {
-    size_t cursor = 0;
-    uint32_t r = unibrow::Utf8::ValueOf(utf8_data, remaining_in_str, &cursor);
-    DCHECK(cursor > 0 && cursor <= remaining_in_str);
+  int i = 0;
+  size_t str_size = static_cast<size_t>(str_len);
+  size_t cursor = 0;
+  uint32_t buffer = 0;
+  unibrow::Utf8::State state = unibrow::Utf8::State::kAccept;
+
+  while (cursor < str_size && i < slen) {
+    uint32_t r = unibrow::Utf8::ValueOfIncremental(utf8_data[cursor], &cursor,
+                                                   &state, &buffer);
+    if (r == unibrow::Utf8::kIncomplete) continue;
     if (r > unibrow::Utf16::kMaxNonSurrogateCharCode) {
-      if (i > slen - 1) return false;
+      if (i + 1 == slen) return false;
       if (Get(i++) != unibrow::Utf16::LeadSurrogate(r)) return false;
-      if (Get(i) != unibrow::Utf16::TrailSurrogate(r)) return false;
+      if (Get(i++) != unibrow::Utf16::TrailSurrogate(r)) return false;
     } else {
-      if (Get(i) != r) return false;
+      if (Get(i++) != r) return false;
     }
-    utf8_data += cursor;
-    remaining_in_str -= cursor;
   }
-  return (allow_prefix_match || i == slen) && remaining_in_str == 0;
+
+  uint32_t end = unibrow::Utf8::ValueOfIncrementalFinish(&state);
+  if (end) {
+    if (i == slen) return false;
+    if (Get(i++) != end) return false;
+  }
+
+  return (allow_prefix_match || i == slen) && cursor == str_size;
 }
 
 template <>
@@ -12082,24 +12092,30 @@ uint32_t StringHasher::ComputeUtf8Hash(Vector<const char> chars,
     *utf16_length_out = vector_length;
     return HashSequentialString(chars.start(), vector_length, seed);
   }
+
   // Start with a fake length which won't affect computation.
   // It will be updated later.
   StringHasher hasher(String::kMaxArrayIndexSize, seed);
-  size_t remaining = static_cast<size_t>(vector_length);
+  DCHECK(hasher.is_array_index_);
+
   const uint8_t* stream = reinterpret_cast<const uint8_t*>(chars.start());
+  size_t size = static_cast<size_t>(vector_length);
+  size_t cursor = 0;
   int utf16_length = 0;
   bool is_index = true;
-  DCHECK(hasher.is_array_index_);
-  while (remaining > 0) {
-    size_t consumed = 0;
-    uint32_t c = unibrow::Utf8::ValueOf(stream, remaining, &consumed);
-    DCHECK(consumed > 0 && consumed <= remaining);
-    stream += consumed;
-    remaining -= consumed;
+  uint32_t buffer = 0;
+  unibrow::Utf8::State state = unibrow::Utf8::State::kAccept;
+
+  while (cursor < size) {
+    uint32_t c = unibrow::Utf8::ValueOfIncremental(stream[cursor], &cursor,
+                                                   &state, &buffer);
+    if (c == unibrow::Utf8::kIncomplete) continue;
+
     bool is_two_characters = c > unibrow::Utf16::kMaxNonSurrogateCharCode;
     utf16_length += is_two_characters ? 2 : 1;
-    // No need to keep hashing. But we do need to calculate utf16_length.
-    if (utf16_length > String::kMaxHashCalcLength) continue;
+
+    // No need to keep hashing.
+    if (utf16_length > String::kMaxHashCalcLength) break;
     if (is_two_characters) {
       uint16_t c1 = unibrow::Utf16::LeadSurrogate(c);
       uint16_t c2 = unibrow::Utf16::TrailSurrogate(c);
@@ -12112,7 +12128,23 @@ uint32_t StringHasher::ComputeUtf8Hash(Vector<const char> chars,
       if (is_index) is_index = hasher.UpdateIndex(c);
     }
   }
-  *utf16_length_out = static_cast<int>(utf16_length);
+
+  // Now that hashing is done, we just need to calculate utf16_length
+  while (cursor < size) {
+    uint32_t c = unibrow::Utf8::ValueOfIncremental(stream[cursor], &cursor,
+                                                   &state, &buffer);
+    if (c == unibrow::Utf8::kIncomplete) continue;
+    bool is_two_characters = c > unibrow::Utf16::kMaxNonSurrogateCharCode;
+    utf16_length += is_two_characters ? 2 : 1;
+  }
+
+  uint32_t end = unibrow::Utf8::ValueOfIncrementalFinish(&state);
+  if (end) {
+    DCHECK_LT(end, unibrow::Utf16::kMaxNonSurrogateCharCode);
+    utf16_length++;
+  }
+
+  *utf16_length_out = utf16_length;
   // Must set length here so that hash computation is correct.
   hasher.length_ = utf16_length;
   return hasher.GetHashField();
