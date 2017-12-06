@@ -29,7 +29,7 @@ class V8_EXPORT_PRIVATE Utf8DecoderBase {
   const uint8_t* unbuffered_start_;
   size_t unbuffered_length_;
   size_t utf16_length_;
-  bool last_byte_of_buffer_unused_;
+  size_t bytes_read_;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(Utf8DecoderBase);
@@ -51,7 +51,7 @@ Utf8DecoderBase::Utf8DecoderBase()
     : unbuffered_start_(nullptr),
       unbuffered_length_(0),
       utf16_length_(0),
-      last_byte_of_buffer_unused_(false) {}
+      bytes_read_(0) {}
 
 Utf8DecoderBase::Utf8DecoderBase(uint16_t* buffer, size_t buffer_length,
                                  const uint8_t* stream, size_t stream_length) {
@@ -76,17 +76,18 @@ template <size_t kBufferSize>
 size_t Utf8Decoder<kBufferSize>::WriteUtf16(uint16_t* data,
                                             size_t length) const {
   DCHECK_GT(length, 0);
-  if (length > utf16_length_) length = utf16_length_;
+  length = std::min(length, utf16_length_);
+
   // memcpy everything in buffer.
-  size_t buffer_length =
-      last_byte_of_buffer_unused_ ? kBufferSize - 1 : kBufferSize;
-  size_t memcpy_length = length <= buffer_length ? length : buffer_length;
+  size_t memcpy_length = std::min(length, bytes_read_);
   v8::internal::MemCopy(data, buffer_, memcpy_length * sizeof(uint16_t));
-  if (length <= buffer_length) return length;
+
+  if (length <= bytes_read_) return length;
+
   DCHECK_NOT_NULL(unbuffered_start_);
   // Copy the rest the slow way.
-  WriteUtf16Slow(unbuffered_start_, unbuffered_length_, data + buffer_length,
-                 length - buffer_length);
+  WriteUtf16Slow(unbuffered_start_, unbuffered_length_, data + bytes_read_,
+                 length - bytes_read_);
   return length;
 }
 
