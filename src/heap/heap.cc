@@ -56,6 +56,7 @@
 #include "src/snapshot/snapshot.h"
 #include "src/tracing/trace-event.h"
 #include "src/trap-handler/trap-handler.h"
+#include "src/unicode-decoder.h"
 #include "src/unicode-inl.h"
 #include "src/utils-inl.h"
 #include "src/utils.h"
@@ -3534,31 +3535,15 @@ static inline void WriteOneByteData(Vector<const char> vector, uint8_t* chars,
 
 static inline void WriteTwoByteData(Vector<const char> vector, uint16_t* chars,
                                     int len) {
-  const uint8_t* stream = reinterpret_cast<const uint8_t*>(vector.start());
-  size_t stream_length = vector.length();
-  size_t cursor = 0;
-  uint32_t buffer = 0;
-  unibrow::Utf8::State state = unibrow::Utf8::State::kAccept;
+  unibrow::Utf8Iterator it = unibrow::Utf8Iterator(vector);
+  while (!it.Done()) {
+    DCHECK_GT(len, 0);
+    len -= 1;
 
-  while (cursor < stream_length) {
-    uint32_t c = unibrow::Utf8::ValueOfIncremental(stream[cursor], &cursor,
-                                                   &state, &buffer);
-    if (c == unibrow::Utf8::kIncomplete) continue;
-
+    uint16_t c = it++;
     DCHECK_NE(unibrow::Utf8::kBadChar, c);
-    if (c > unibrow::Utf16::kMaxNonSurrogateCharCode) {
-      DCHECK_GT(len, 1);
-      len -= 2;
-      *chars++ = unibrow::Utf16::LeadSurrogate(c);
-      *chars++ = unibrow::Utf16::TrailSurrogate(c);
-    } else {
-      DCHECK_GT(len, 0);
-      len -= 1;
-      *chars++ = c;
-    }
+    *chars++ = c;
   }
-  DCHECK_NE(unibrow::Utf8::ValueOfIncrementalFinish(&state),
-            unibrow::Utf8::kBadChar);
   DCHECK_EQ(len, 0);
 }
 

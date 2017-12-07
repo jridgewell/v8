@@ -72,6 +72,7 @@
 #include "src/string-stream.h"
 #include "src/trap-handler/trap-handler.h"
 #include "src/unicode-cache-inl.h"
+#include "src/unicode-decoder.h"
 #include "src/utils-inl.h"
 #include "src/wasm/wasm-objects.h"
 #include "src/zone/zone.h"
@@ -11897,33 +11898,13 @@ bool String::IsUtf8EqualTo(Vector<const char> str, bool allow_prefix_match) {
     return false;
   }
 
-  const uint8_t* utf8_data = reinterpret_cast<const uint8_t*>(str.start());
   int i = 0;
-  size_t str_size = static_cast<size_t>(str_len);
-  size_t cursor = 0;
-  uint32_t buffer = 0;
-  unibrow::Utf8::State state = unibrow::Utf8::State::kAccept;
-
-  while (cursor < str_size && i < slen) {
-    uint32_t r = unibrow::Utf8::ValueOfIncremental(utf8_data[cursor], &cursor,
-                                                   &state, &buffer);
-    if (r == unibrow::Utf8::kIncomplete) continue;
-    if (r > unibrow::Utf16::kMaxNonSurrogateCharCode) {
-      if (i + 1 == slen) return false;
-      if (Get(i++) != unibrow::Utf16::LeadSurrogate(r)) return false;
-      if (Get(i++) != unibrow::Utf16::TrailSurrogate(r)) return false;
-    } else {
-      if (Get(i++) != r) return false;
-    }
+  unibrow::Utf8Iterator it = unibrow::Utf8Iterator(str);
+  while (i < slen && !it.Done()) {
+    if (Get(i++) != it++) return false;
   }
 
-  uint32_t end = unibrow::Utf8::ValueOfIncrementalFinish(&state);
-  if (end) {
-    if (i == slen) return false;
-    if (Get(i++) != end) return false;
-  }
-
-  return (allow_prefix_match || i == slen) && cursor == str_size;
+  return (allow_prefix_match || i == slen) && it.Done();
 }
 
 template <>
