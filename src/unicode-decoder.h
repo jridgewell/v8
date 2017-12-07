@@ -26,10 +26,9 @@ class V8_EXPORT_PRIVATE Utf8DecoderBase {
              size_t stream_length);
   static void WriteUtf16Slow(const uint8_t* stream, size_t stream_length,
                              uint16_t* data, size_t length);
-  const uint8_t* unbuffered_start_;
-  size_t unbuffered_length_;
-  size_t utf16_length_;
   size_t bytes_read_;
+  size_t bytes_written_;
+  size_t utf16_length_;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(Utf8DecoderBase);
@@ -41,17 +40,15 @@ class Utf8Decoder : public Utf8DecoderBase {
   inline Utf8Decoder() {}
   inline Utf8Decoder(const char* stream, size_t length);
   inline void Reset(const char* stream, size_t length);
-  inline size_t WriteUtf16(uint16_t* data, size_t length) const;
+  inline size_t WriteUtf16(const char* stream, size_t stream_length,
+                           uint16_t* data, size_t length) const;
 
  private:
   uint16_t buffer_[kBufferSize];
 };
 
 Utf8DecoderBase::Utf8DecoderBase()
-    : unbuffered_start_(nullptr),
-      unbuffered_length_(0),
-      utf16_length_(0),
-      bytes_read_(0) {}
+    : bytes_read_(0), bytes_written_(0), utf16_length_(0) {}
 
 Utf8DecoderBase::Utf8DecoderBase(uint16_t* buffer, size_t buffer_length,
                                  const uint8_t* stream, size_t stream_length) {
@@ -71,24 +68,25 @@ void Utf8Decoder<kBufferSize>::Reset(const char* stream, size_t length) {
                          reinterpret_cast<const uint8_t*>(stream), length);
 }
 
-
 template <size_t kBufferSize>
-size_t Utf8Decoder<kBufferSize>::WriteUtf16(uint16_t* data,
-                                            size_t length) const {
-  DCHECK_GT(length, 0);
-  length = std::min(length, utf16_length_);
+size_t Utf8Decoder<kBufferSize>::WriteUtf16(const char* stream,
+                                            size_t stream_length,
+                                            uint16_t* data,
+                                            size_t data_length) const {
+  DCHECK_GT(data_length, 0);
+  data_length = std::min(data_length, utf16_length_);
 
   // memcpy everything in buffer.
-  size_t memcpy_length = std::min(length, bytes_read_);
+  size_t memcpy_length = std::min(data_length, bytes_written_);
   v8::internal::MemCopy(data, buffer_, memcpy_length * sizeof(uint16_t));
 
-  if (length <= bytes_read_) return length;
+  if (data_length <= bytes_written_) return data_length;
 
-  DCHECK_NOT_NULL(unbuffered_start_);
   // Copy the rest the slow way.
-  WriteUtf16Slow(unbuffered_start_, unbuffered_length_, data + bytes_read_,
-                 length - bytes_read_);
-  return length;
+  WriteUtf16Slow(reinterpret_cast<const uint8_t*>(stream) + bytes_read_,
+                 stream_length - bytes_read_, data + bytes_written_,
+                 data_length - bytes_written_);
+  return data_length;
 }
 
 class Latin1 {
