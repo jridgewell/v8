@@ -391,9 +391,9 @@ MaybeHandle<String> Factory::NewStringFromOneByte(Vector<const uint8_t> string,
 MaybeHandle<String> Factory::NewStringFromUtf8(Vector<const char> string,
                                                PretenureFlag pretenure) {
   // Check for ASCII first since this is the common case.
-  const char* start = string.start();
+  const char* ascii_data = string.start();
   int length = string.length();
-  int non_ascii_start = String::NonAsciiStart(start, length);
+  int non_ascii_start = String::NonAsciiStart(ascii_data, length);
   if (non_ascii_start >= length) {
     // If the string is ASCII, we do not need to convert the characters
     // since UTF8 is backwards compatible with ASCII.
@@ -403,8 +403,7 @@ MaybeHandle<String> Factory::NewStringFromUtf8(Vector<const char> string,
   // Non-ASCII and we need to decode.
   Access<UnicodeCache::Utf8Decoder>
       decoder(isolate()->unicode_cache()->utf8_decoder());
-  decoder->Reset(string.start() + non_ascii_start,
-                 length - non_ascii_start);
+  decoder->Reset(ascii_data + non_ascii_start, length - non_ascii_start);
   int utf16_length = static_cast<int>(decoder->Utf16Length());
   DCHECK_GT(utf16_length, 0);
   // Allocate string.
@@ -415,12 +414,11 @@ MaybeHandle<String> Factory::NewStringFromUtf8(Vector<const char> string,
       String);
   // Copy ASCII portion.
   uint16_t* data = result->GetChars();
-  const char* ascii_data = string.start();
   for (int i = 0; i < non_ascii_start; i++) {
     *data++ = *ascii_data++;
   }
   // Now write the remainder.
-  decoder->WriteUtf16(data, utf16_length);
+  decoder->WriteUtf16(ascii_data, length, data, utf16_length);
   return result;
 }
 
@@ -428,8 +426,9 @@ MaybeHandle<String> Factory::NewStringFromUtf8SubString(
     Handle<SeqOneByteString> str, int begin, int length,
     PretenureFlag pretenure) {
   // Check for ASCII first since this is the common case.
-  const char* start = reinterpret_cast<const char*>(str->GetChars() + begin);
-  int non_ascii_start = String::NonAsciiStart(start, length);
+  const char* ascii_data =
+      reinterpret_cast<const char*>(str->GetChars() + begin);
+  int non_ascii_start = String::NonAsciiStart(ascii_data, length);
   if (non_ascii_start >= length) {
     // If the string is ASCII, we can just make a substring.
     // TODO(v8): the pretenure flag is ignored in this case.
@@ -439,7 +438,7 @@ MaybeHandle<String> Factory::NewStringFromUtf8SubString(
   // Non-ASCII and we need to decode.
   Access<UnicodeCache::Utf8Decoder> decoder(
       isolate()->unicode_cache()->utf8_decoder());
-  decoder->Reset(start + non_ascii_start, length - non_ascii_start);
+  decoder->Reset(ascii_data + non_ascii_start, length - non_ascii_start);
   int utf16_length = static_cast<int>(decoder->Utf16Length());
   DCHECK_GT(utf16_length, 0);
   // Allocate string.
@@ -447,18 +446,13 @@ MaybeHandle<String> Factory::NewStringFromUtf8SubString(
   ASSIGN_RETURN_ON_EXCEPTION(
       isolate(), result,
       NewRawTwoByteString(non_ascii_start + utf16_length, pretenure), String);
-
-  // Reset the decoder, because the original {str} may have moved.
-  const char* ascii_data =
-      reinterpret_cast<const char*>(str->GetChars() + begin);
-  decoder->Reset(ascii_data + non_ascii_start, length - non_ascii_start);
   // Copy ASCII portion.
   uint16_t* data = result->GetChars();
   for (int i = 0; i < non_ascii_start; i++) {
     *data++ = *ascii_data++;
   }
   // Now write the remainder.
-  decoder->WriteUtf16(data, utf16_length);
+  decoder->WriteUtf16(ascii_data, length, data, utf16_length);
   return result;
 }
 
