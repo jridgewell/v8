@@ -193,93 +193,6 @@ static int LookupMapping(const int32_t* table,
   }
 }
 
-// The below algorithm is based on Bjoern Hoehrmann's DFA Unicode Decoder.
-// Copyright (c) 2008-2009 Bjoern Hoehrmann <bjoern@hoehrmann.de>
-// See http://bjoern.hoehrmann.de/utf-8/decoder/dfa/ for details.
-void Utf8::DecodeUtf8Byte(byte next, State* state,
-                          Utf8IncrementalBuffer* buffer) {
-  // This table maps character byte to a transition.
-  static constexpr uint8_t kUtf8Transitions[] = {
-      0,  0, 0, 0, 0,  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,  // 00-0F
-      0,  0, 0, 0, 0,  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,  // 10-1F
-      0,  0, 0, 0, 0,  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,  // 20-2F
-      0,  0, 0, 0, 0,  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,  // 30-3F
-      0,  0, 0, 0, 0,  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,  // 40-4F
-      0,  0, 0, 0, 0,  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,  // 50-5F
-      0,  0, 0, 0, 0,  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,  // 60-6F
-      0,  0, 0, 0, 0,  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,  // 70-7F
-      1,  1, 1, 1, 1,  1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,  // 80-8F
-      2,  2, 2, 2, 2,  2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,  // 90-9F
-      3,  3, 3, 3, 3,  3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3,  // A0-AF
-      3,  3, 3, 3, 3,  3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3,  // B0-BF
-      4,  4, 5, 5, 5,  5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,  // C0-CF
-      5,  5, 5, 5, 5,  5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,  // D0-DF
-      6,  7, 7, 7, 7,  7, 7, 7, 7, 7, 7, 7, 7, 8, 7, 7,  // E0-EF
-      10, 9, 9, 9, 11, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,  // F0-FF
-  };
-
-  // This table maps the current transition to a mask that needs to apply to
-  // the byte.
-  static constexpr uint8_t kUtf8Masks[] = {
-      // One byte chars hold 7 bits of payload
-      0x7F,
-      // Continuation bytes hold 6 bits of payload
-      0x3F, 0x3F, 0x3F,
-      // Invalid bytes hold no payload
-      0x00,
-      // Two byte lead chars hold 5 bits of payload
-      0x1F,
-      // Three byte lead chars hold 4 bits of payload
-      0x0F, 0x0F, 0x0F,
-      // Four byte lead chars hold 3 bits of payload
-      0x07, 0x07, 0x07,
-  };
-
-  // This table maps a current state to a new state when adding a transition.
-  // Note there are 12 new states for each group, one for each transition.
-  static constexpr State kUtf8States[] = {
-      // (rejection state)
-      kReject, kReject, kReject, kReject, kReject, kReject, kReject, kReject,
-      kReject, kReject, kReject, kReject,
-
-      // kAccept (accept one bytes, or lead bytes)
-      kAccept, kReject, kReject, kReject, kReject, kTwoByte, kThreeByteHigh,
-      kThreeByte, kThreeByteLow, kFourByte, kFourByteHigh, kFourByteLow,
-
-      // kTwoByte (accept any continuation bytes)
-      kReject, kAccept, kAccept, kAccept, kReject, kReject, kReject, kReject,
-      kReject, kReject, kReject, kReject,
-
-      // kThreeByteHigh (accept A0-BF continuation bytes)
-      kReject, kReject, kReject, kTwoByte, kReject, kReject, kReject, kReject,
-      kReject, kReject, kReject, kReject,
-
-      // kThreeByte (accept any continuation bytes)
-      kReject, kTwoByte, kTwoByte, kTwoByte, kReject, kReject, kReject, kReject,
-      kReject, kReject, kReject, kReject,
-
-      // kThreeByteLow (accept 80-9F continuation bytes)
-      kReject, kTwoByte, kTwoByte, kReject, kReject, kReject, kReject, kReject,
-      kReject, kReject, kReject, kReject,
-
-      // kFourByte (accept any continuation bytes)
-      kReject, kThreeByte, kThreeByte, kThreeByte, kReject, kReject, kReject,
-      kReject, kReject, kReject, kReject, kReject,
-
-      // kFourByteHigh (accept 90-BF continuation bytes)
-      kReject, kReject, kThreeByte, kThreeByte, kReject, kReject, kReject,
-      kReject, kReject, kReject, kReject, kReject,
-
-      // kFourByteLow (accept 80-8F continuation bytes)
-      kReject, kThreeByte, kReject, kReject, kReject, kReject, kReject, kReject,
-      kReject, kReject, kReject, kReject,
-  };
-
-  const uint8_t transition = kUtf8Transitions[next];
-  *state = kUtf8States[*state + transition];
-  *buffer = (*buffer << 6) | (next & kUtf8Masks[transition]);
-}
-
 // This method decodes an UTF-8 value according to RFC 3629 and
 // https://encoding.spec.whatwg.org/#utf-8-decoder .
 uchar Utf8::CalculateValue(const byte* str, size_t max_length, size_t* cursor) {
@@ -315,7 +228,7 @@ uchar Utf8::ValueOfIncremental(byte next, size_t* cursor, State* state,
 
   // So we're at the lead byte of a 2/3/4 sequence, or we're at a continuation
   // char in that sequence.
-  DecodeUtf8Byte(next, state, buffer);
+  Utf8DfaDecoder::Decode(next, state, buffer);
 
   switch (*state) {
     case State::kAccept: {
@@ -362,7 +275,7 @@ bool Utf8::ValidateEncoding(const byte* bytes, size_t length) {
   State state = State::kAccept;
   Utf8IncrementalBuffer throw_away = 0;
   for (size_t i = 0; i < length && state != State::kReject; i++) {
-    DecodeUtf8Byte(bytes[i], &state, &throw_away);
+    Utf8DfaDecoder::Decode(bytes[i], &state, &throw_away);
   }
   return state == State::kAccept;
 }

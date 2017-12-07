@@ -7,6 +7,7 @@
 
 #include <sys/types.h>
 #include "src/globals.h"
+#include "src/third_party/utf8-decoder/utf8-decoder.h"
 #include "src/utils.h"
 /**
  * \file
@@ -129,6 +130,8 @@ class Utf16 {
 
 class V8_EXPORT_PRIVATE Utf8 {
  public:
+  using State = Utf8DfaDecoder::State;
+
   static inline uchar Length(uchar chr, int previous);
   static inline unsigned EncodeOneByte(char* out, uint8_t c);
   static inline unsigned Encode(char* out,
@@ -158,17 +161,6 @@ class V8_EXPORT_PRIVATE Utf8 {
   static inline uchar ValueOf(const byte* str, size_t length, size_t* cursor);
 
   typedef uint32_t Utf8IncrementalBuffer;
-  enum State : uint8_t {
-    kReject = 0,
-    kAccept = 12,
-    kTwoByte = 24,
-    kThreeByteHigh = 36,
-    kThreeByte = 48,
-    kThreeByteLow = 60,
-    kFourByte = 72,
-    kFourByteHigh = 84,
-    kFourByteLow = 96,
-  };
   static uchar ValueOfIncremental(byte next_byte, size_t* cursor, State* state,
                                   Utf8IncrementalBuffer* buffer);
   static uchar ValueOfIncrementalFinish(State* state);
@@ -185,10 +177,6 @@ class V8_EXPORT_PRIVATE Utf8 {
   // - absence of surrogates,
   // - valid code point range.
   static bool ValidateEncoding(const byte* str, size_t length);
-
- private:
-  static inline void DecodeUtf8Byte(byte next, State* state,
-                                    Utf8IncrementalBuffer* buffer);
 };
 
 struct Uppercase {

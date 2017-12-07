@@ -10,6 +10,7 @@
 #include "src/handles.h"
 #include "src/objects-inl.h"
 #include "src/parsing/scanner.h"
+#include "src/third_party/utf8-decoder/utf8-decoder.h"
 #include "src/unicode-inl.h"
 
 namespace v8 {
@@ -203,9 +204,7 @@ class Utf8ExternalStreamingStream : public BufferedUtf16CharacterStream {
   Utf8ExternalStreamingStream(
       ScriptCompiler::ExternalSourceStream* source_stream,
       RuntimeCallStats* stats)
-      : current_({0,
-                  {0, 0, unibrow::Utf8::Utf8IncrementalBuffer(0),
-                   unibrow::Utf8::State::kAccept}}),
+      : current_({0, {0, 0, 0, Utf8DfaDecoder::State::kAccept}}),
         source_stream_(source_stream),
         stats_(stats) {}
   ~Utf8ExternalStreamingStream() override {
@@ -225,8 +224,8 @@ class Utf8ExternalStreamingStream : public BufferedUtf16CharacterStream {
   struct StreamPosition {
     size_t bytes;
     size_t chars;
-    unibrow::Utf8::Utf8IncrementalBuffer incomplete_char;
-    unibrow::Utf8::State state;
+    uint32_t incomplete_char;
+    Utf8DfaDecoder::State state;
   };
 
   // Position contains a StreamPosition and the index of the chunk the position
@@ -271,9 +270,8 @@ bool Utf8ExternalStreamingStream::SkipToPosition(size_t position) {
   const Chunk& chunk = chunks_[current_.chunk_no];
   DCHECK(current_.pos.bytes >= chunk.start.bytes);
 
-  unibrow::Utf8::State state = chunk.start.state;
-  unibrow::Utf8::Utf8IncrementalBuffer incomplete_char =
-      chunk.start.incomplete_char;
+  Utf8DfaDecoder::State state = chunk.start.state;
+  uint32_t incomplete_char = chunk.start.incomplete_char;
   size_t it = current_.pos.bytes - chunk.start.bytes;
   size_t chars = chunk.start.chars;
   while (it < chunk.length && chars < position) {
@@ -308,9 +306,8 @@ void Utf8ExternalStreamingStream::FillBufferFromCurrentChunk() {
   uint16_t* cursor = buffer_ + (buffer_end_ - buffer_start_);
   DCHECK_EQ(cursor, buffer_end_);
 
-  unibrow::Utf8::State state = current_.pos.state;
-  unibrow::Utf8::Utf8IncrementalBuffer incomplete_char =
-      current_.pos.incomplete_char;
+  Utf8DfaDecoder::State state = current_.pos.state;
+  uint32_t incomplete_char = current_.pos.incomplete_char;
 
   // If the current chunk is the last (empty) chunk we'll have to process
   // any left-over, partial characters.
@@ -404,17 +401,15 @@ void Utf8ExternalStreamingStream::SearchPosition(size_t position) {
     //  checking whether the # bytes in a chunk are equal to the # chars, and if
     //  so avoid the expensive SkipToPosition.)
     bool ascii_only_chunk =
-        chunks_[chunk_no].start.incomplete_char ==
-            unibrow::Utf8::Utf8IncrementalBuffer(0) &&
+        chunks_[chunk_no].start.incomplete_char == 0 &&
         (chunks_[chunk_no + 1].start.bytes - chunks_[chunk_no].start.bytes) ==
             (chunks_[chunk_no + 1].start.chars - chunks_[chunk_no].start.chars);
     if (ascii_only_chunk) {
       size_t skip = position - chunks_[chunk_no].start.chars;
       current_ = {chunk_no,
                   {chunks_[chunk_no].start.bytes + skip,
-                   chunks_[chunk_no].start.chars + skip,
-                   unibrow::Utf8::Utf8IncrementalBuffer(0),
-                   unibrow::Utf8::State::kAccept}};
+                   chunks_[chunk_no].start.chars + skip, 0,
+                   Utf8DfaDecoder::State::kAccept}};
     } else {
       current_ = {chunk_no, chunks_[chunk_no].start};
       SkipToPosition(position);
