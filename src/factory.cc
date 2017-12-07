@@ -401,59 +401,38 @@ MaybeHandle<String> Factory::NewStringFromUtf8(Vector<const char> string,
   }
 
   // Non-ASCII and we need to decode.
+  auto non_ascii = string.SubVector(non_ascii_start, length);
   Access<UnicodeCache::Utf8Decoder>
       decoder(isolate()->unicode_cache()->utf8_decoder());
-  decoder->Reset(ascii_data + non_ascii_start, length - non_ascii_start);
+  decoder->Reset(non_ascii);
+
   int utf16_length = static_cast<int>(decoder->Utf16Length());
   DCHECK_GT(utf16_length, 0);
+
   // Allocate string.
   Handle<SeqTwoByteString> result;
   ASSIGN_RETURN_ON_EXCEPTION(
       isolate(), result,
       NewRawTwoByteString(non_ascii_start + utf16_length, pretenure),
       String);
+
   // Copy ASCII portion.
   uint16_t* data = result->GetChars();
   for (int i = 0; i < non_ascii_start; i++) {
     *data++ = *ascii_data++;
   }
+
   // Now write the remainder.
-  decoder->WriteUtf16(ascii_data, length, data, utf16_length);
+  decoder->WriteUtf16(data, utf16_length, non_ascii);
   return result;
 }
 
 MaybeHandle<String> Factory::NewStringFromUtf8SubString(
     Handle<SeqOneByteString> str, int begin, int length,
     PretenureFlag pretenure) {
-  // Check for ASCII first since this is the common case.
   const char* ascii_data =
       reinterpret_cast<const char*>(str->GetChars() + begin);
-  int non_ascii_start = String::NonAsciiStart(ascii_data, length);
-  if (non_ascii_start >= length) {
-    // If the string is ASCII, we can just make a substring.
-    // TODO(v8): the pretenure flag is ignored in this case.
-    return NewSubString(str, begin, begin + length);
-  }
-
-  // Non-ASCII and we need to decode.
-  Access<UnicodeCache::Utf8Decoder> decoder(
-      isolate()->unicode_cache()->utf8_decoder());
-  decoder->Reset(ascii_data + non_ascii_start, length - non_ascii_start);
-  int utf16_length = static_cast<int>(decoder->Utf16Length());
-  DCHECK_GT(utf16_length, 0);
-  // Allocate string.
-  Handle<SeqTwoByteString> result;
-  ASSIGN_RETURN_ON_EXCEPTION(
-      isolate(), result,
-      NewRawTwoByteString(non_ascii_start + utf16_length, pretenure), String);
-  // Copy ASCII portion.
-  uint16_t* data = result->GetChars();
-  for (int i = 0; i < non_ascii_start; i++) {
-    *data++ = *ascii_data++;
-  }
-  // Now write the remainder.
-  decoder->WriteUtf16(ascii_data, length, data, utf16_length);
-  return result;
+  return NewStringFromUtf8(Vector<const char>(ascii_data, length), pretenure);
 }
 
 MaybeHandle<String> Factory::NewStringFromTwoByte(const uc16* string,
