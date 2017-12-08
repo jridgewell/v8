@@ -17,11 +17,23 @@ class Utf8Iterator {
   using Vector = v8::internal::Vector<const char>;
 
   Utf8Iterator(const Vector& stream) : Utf8Iterator(stream, 0, false) {}
+  Utf8Iterator(const Vector& stream, size_t offset, bool trailing)
+      : stream_(stream), cursor_(offset) {
+    DCHECK_LE(offset, stream.length());
+    // Read the first char
+    ++*this;
+    trailing_ = trailing;
+    if (trailing) {
+      DCHECK_GT(char_, Utf16::kMaxNonSurrogateCharCode);
+    }
+  }
 
   uint16_t operator*();
   uint16_t operator++();
   uint16_t operator++(int);
   bool Done();
+  bool Trailing() { return trailing_; }
+  size_t Offset() { return offset_; }
 
  private:
   const Vector& stream_;
@@ -29,21 +41,6 @@ class Utf8Iterator {
   size_t offset_;
   uint32_t char_;
   bool trailing_;
-
-  Utf8Iterator(const Vector& stream, size_t offset, bool trailing)
-      : stream_(stream), cursor_(offset) {
-    // Read the first char
-    ++*this;
-    trailing_ = trailing;
-  }
-
-  bool Trailing() {
-    return trailing_;
-  }
-
-  size_t Offset() {
-    return offset_;
-  }
 
   friend class Utf8DecoderBase;
 };
@@ -62,8 +59,7 @@ class V8_EXPORT_PRIVATE Utf8DecoderBase {
   // This reads all characters and sets the utf16_length_.
   // The first buffer_length utf16 chars are cached in the buffer.
   void Reset(uint16_t* buffer, size_t buffer_length, const Vector& vector);
-  static void WriteUtf16Slow(uint16_t* data, size_t length,
-                             Utf8Iterator* it);
+  static void WriteUtf16Slow(uint16_t* data, size_t length, Utf8Iterator* it);
   size_t bytes_read_;
   size_t bytes_written_;
   size_t utf16_length_;
