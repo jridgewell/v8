@@ -47,8 +47,7 @@ uint16_t Utf8Iterator::operator++(int) {
 }
 
 bool Utf8Iterator::Done() {
-  return cursor_ >= static_cast<size_t>(stream_.length()) &&
-         char_ == Utf8::kBufferEmpty;
+  return offset_ >= static_cast<size_t>(stream_.length());
 }
 
 void Utf8DecoderBase::Reset(uint16_t* buffer, size_t buffer_length,
@@ -75,10 +74,10 @@ void Utf8DecoderBase::Reset(uint16_t* buffer, size_t buffer_length,
 
 void Utf8DecoderBase::WriteUtf16Slow(uint16_t* data, size_t data_length,
                                      Utf8Iterator* it) {
-  while (!it.Done()) {
+  while (!it->Done()) {
     DCHECK_GT(data_length, 0);
     data_length--;
-    *data++ = it++;
+    *data++ = (*it)++;
   }
 }
 
