@@ -20,6 +20,8 @@ uint16_t Utf8Iterator::operator*() {
 }
 
 uint16_t Utf8Iterator::operator++() {
+  DCHECK_EQ(this->Done(), false);
+
   if (char_ > Utf16::kMaxNonSurrogateCharCode && !trailing_) {
     trailing_ = true;
     return **this;
@@ -27,16 +29,8 @@ uint16_t Utf8Iterator::operator++() {
   trailing_ = false;
   offset_ = cursor_;
 
-  Utf8::State state = Utf8::State::kAccept;
-  uint32_t buffer = 0;
-  while (cursor_ < static_cast<size_t>(stream_.length())) {
-    char_ =
-        Utf8::ValueOfIncremental(stream_[cursor_], &cursor_, &state, &buffer);
-    if (char_ == Utf8::kIncomplete) continue;
-    return **this;
-  }
-
-  char_ = Utf8::ValueOfIncrementalFinish(&state);
+  char_ = Utf8::ValueOf(reinterpret_cast<const uint8_t*>(stream_.begin()) + cursor_,
+                        stream_.length() - cursor_, &cursor_);
   return **this;
 }
 
@@ -47,7 +41,7 @@ uint16_t Utf8Iterator::operator++(int) {
 }
 
 bool Utf8Iterator::Done() {
-  return offset_ >= static_cast<size_t>(stream_.length());
+  return offset_ == static_cast<size_t>(stream_.length());
 }
 
 void Utf8DecoderBase::Reset(uint16_t* buffer, size_t buffer_length,
