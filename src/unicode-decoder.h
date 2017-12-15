@@ -22,6 +22,9 @@ class Utf8Iterator {
     DCHECK_LE(offset, stream.length());
     // Read the first char
     ++*this;
+
+    // This must be set after reading the first char, since the offset marks
+    // the start of the octet sequence that the trailing char is part of.
     trailing_ = trailing;
     if (trailing) {
       DCHECK_GT(char_, Utf16::kMaxNonSurrogateCharCode);
@@ -59,7 +62,7 @@ class V8_EXPORT_PRIVATE Utf8DecoderBase {
   static void WriteUtf16Slow(uint16_t* data, size_t length, Utf8Iterator* it);
 
   size_t bytes_read_;
-  size_t bytes_written_;
+  size_t chars_written_;
   size_t utf16_length_;
   bool trailing_;
 
@@ -82,7 +85,7 @@ class Utf8Decoder : public Utf8DecoderBase {
 };
 
 Utf8DecoderBase::Utf8DecoderBase()
-    : bytes_read_(0), bytes_written_(0), utf16_length_(0) {}
+    : bytes_read_(0), chars_written_(0), utf16_length_(0) {}
 
 Utf8DecoderBase::Utf8DecoderBase(
     uint16_t* buffer, size_t buffer_length,
@@ -109,14 +112,14 @@ size_t Utf8Decoder<kBufferSize>::WriteUtf16(
   data_length = std::min(data_length, utf16_length_);
 
   // memcpy everything in buffer.
-  size_t memcpy_length = std::min(data_length, bytes_written_);
+  size_t memcpy_length = std::min(data_length, chars_written_);
   v8::internal::MemCopy(data, buffer_, memcpy_length * sizeof(uint16_t));
 
-  if (data_length <= bytes_written_) return data_length;
+  if (data_length <= chars_written_) return data_length;
 
   // Copy the rest the slow way.
   Utf8Iterator it = Utf8Iterator(stream, bytes_read_, trailing_);
-  WriteUtf16Slow(data + bytes_written_, data_length - bytes_written_, &it);
+  WriteUtf16Slow(data + chars_written_, data_length - chars_written_, &it);
   return data_length;
 }
 

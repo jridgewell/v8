@@ -56,7 +56,7 @@ void Utf8DecoderBase::Reset(uint16_t* buffer, size_t buffer_length,
   }
   bytes_read_ = it.Offset();
   trailing_ = it.Trailing();
-  bytes_written_ = utf16_length;
+  chars_written_ = utf16_length;
 
   // Now that writing to buffer is done, we just need to calculate utf16_length
   while (!it.Done()) {
