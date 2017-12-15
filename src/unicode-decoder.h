@@ -14,10 +14,10 @@ namespace unibrow {
 
 class Utf8Iterator {
  public:
-  using Vector = v8::internal::Vector<const char>;
-
-  Utf8Iterator(const Vector& stream) : Utf8Iterator(stream, 0, false) {}
-  Utf8Iterator(const Vector& stream, size_t offset, bool trailing)
+  Utf8Iterator(const v8::internal::Vector<const char>& stream)
+      : Utf8Iterator(stream, 0, false) {}
+  Utf8Iterator(const v8::internal::Vector<const char>& stream, size_t offset,
+               bool trailing)
       : stream_(stream), cursor_(offset) {
     DCHECK_LE(offset, stream.length());
     // Read the first char
@@ -36,30 +36,28 @@ class Utf8Iterator {
   size_t Offset() { return offset_; }
 
  private:
-  const Vector& stream_;
+  const v8::internal::Vector<const char>& stream_;
   size_t cursor_;
   size_t offset_;
   uint32_t char_;
   bool trailing_;
-
-  friend class Utf8DecoderBase;
 };
 
 class V8_EXPORT_PRIVATE Utf8DecoderBase {
  public:
-  using Vector = v8::internal::Vector<const char>;
-
   // Initialization done in subclass.
   inline Utf8DecoderBase();
   inline Utf8DecoderBase(uint16_t* buffer, size_t buffer_length,
-                         const Vector& stream);
+                         const v8::internal::Vector<const char>& stream);
   inline size_t Utf16Length() const { return utf16_length_; }
 
  protected:
   // This reads all characters and sets the utf16_length_.
   // The first buffer_length utf16 chars are cached in the buffer.
-  void Reset(uint16_t* buffer, size_t buffer_length, const Vector& vector);
+  void Reset(uint16_t* buffer, size_t buffer_length,
+             const v8::internal::Vector<const char>& vector);
   static void WriteUtf16Slow(uint16_t* data, size_t length, Utf8Iterator* it);
+
   size_t bytes_read_;
   size_t bytes_written_;
   size_t utf16_length_;
@@ -73,10 +71,11 @@ template <size_t kBufferSize>
 class Utf8Decoder : public Utf8DecoderBase {
  public:
   inline Utf8Decoder() {}
-  inline Utf8Decoder(const Vector& stream);
-  inline void Reset(const Vector& stream);
-  inline size_t WriteUtf16(uint16_t* data, size_t length,
-                           const Vector& stream) const;
+  inline Utf8Decoder(const v8::internal::Vector<const char>& stream);
+  inline void Reset(const v8::internal::Vector<const char>& stream);
+  inline size_t WriteUtf16(
+      uint16_t* data, size_t length,
+      const v8::internal::Vector<const char>& stream) const;
 
  private:
   uint16_t buffer_[kBufferSize];
@@ -85,23 +84,27 @@ class Utf8Decoder : public Utf8DecoderBase {
 Utf8DecoderBase::Utf8DecoderBase()
     : bytes_read_(0), bytes_written_(0), utf16_length_(0) {}
 
-Utf8DecoderBase::Utf8DecoderBase(uint16_t* buffer, size_t buffer_length,
-                                 const Vector& stream) {
+Utf8DecoderBase::Utf8DecoderBase(
+    uint16_t* buffer, size_t buffer_length,
+    const v8::internal::Vector<const char>& stream) {
   Reset(buffer, buffer_length, stream);
 }
 
 template <size_t kBufferSize>
-Utf8Decoder<kBufferSize>::Utf8Decoder(const Vector& stream)
+Utf8Decoder<kBufferSize>::Utf8Decoder(
+    const v8::internal::Vector<const char>& stream)
     : Utf8DecoderBase(buffer_, kBufferSize, stream) {}
 
 template <size_t kBufferSize>
-void Utf8Decoder<kBufferSize>::Reset(const Vector& stream) {
+void Utf8Decoder<kBufferSize>::Reset(
+    const v8::internal::Vector<const char>& stream) {
   Utf8DecoderBase::Reset(buffer_, kBufferSize, stream);
 }
 
 template <size_t kBufferSize>
-size_t Utf8Decoder<kBufferSize>::WriteUtf16(uint16_t* data, size_t data_length,
-                                            const Vector& stream) const {
+size_t Utf8Decoder<kBufferSize>::WriteUtf16(
+    uint16_t* data, size_t data_length,
+    const v8::internal::Vector<const char>& stream) const {
   DCHECK_GT(data_length, 0);
   data_length = std::min(data_length, utf16_length_);
 

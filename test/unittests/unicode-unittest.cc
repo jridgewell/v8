@@ -107,7 +107,8 @@ TEST(UnicodeTest, SurrogateOverrunsBuffer) {
 
   std::vector<unibrow::uchar> output_utf16;
   // Not enough continuation bytes before string ends.
-  DecodeUtf16(&utf16_decoder, {0x00, 0xF0, 0x90, 0x80, 0x80, 0x00}, &output_utf16);
+  DecodeUtf16(&utf16_decoder, {0x00, 0xF0, 0x90, 0x80, 0x80, 0x00},
+              &output_utf16);
   CHECK_EQ(output_utf16[0], 0x00);
   CHECK_EQ(output_utf16[1], 0x10000);
   CHECK_EQ(output_utf16[0], 0x00);

@@ -51,7 +51,7 @@ bool Utf8Iterator::Done() {
 }
 
 void Utf8DecoderBase::Reset(uint16_t* buffer, size_t buffer_length,
-                            const Vector& stream) {
+                            const v8::internal::Vector<const char>& stream) {
   size_t utf16_length = 0;
 
   Utf8Iterator it = Utf8Iterator(stream);
