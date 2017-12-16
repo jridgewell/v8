@@ -75,7 +75,7 @@ void Utf8DecoderBase::WriteUtf16Slow(
     bool trailing) {
   Utf8Iterator it = Utf8Iterator(stream, offset, trailing);
   while (!it.Done()) {
-    DCHECK_GT(data_length--, 0);
+    DCHECK_GT(length--, 0);
     *data++ = it++;
   }
 }
