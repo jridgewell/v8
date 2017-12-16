@@ -432,6 +432,12 @@ MaybeHandle<String> Factory::NewStringFromUtf8SubString(
     PretenureFlag pretenure) {
   const char* ascii_data =
       reinterpret_cast<const char*>(str->GetChars() + begin);
+  int non_ascii_start = String::NonAsciiStart(ascii_data, length);
+  if (non_ascii_start >= length) {
+    // If the string is ASCII, we can just make a substring.
+    // TODO(v8): the pretenure flag is ignored in this case.
+    return NewSubString(str, begin, begin + length);
+  }
   return NewStringFromUtf8(Vector<const char>(ascii_data, length), pretenure);
 }
 
