@@ -12079,49 +12079,20 @@ uint32_t StringHasher::ComputeUtf8Hash(Vector<const char> chars,
   StringHasher hasher(String::kMaxArrayIndexSize, seed);
   DCHECK(hasher.is_array_index_);
 
-  const uint8_t* stream = reinterpret_cast<const uint8_t*>(chars.start());
-  size_t size = static_cast<size_t>(vector_length);
-  size_t cursor = 0;
+  unibrow::Utf8Iterator it = unibrow::Utf8Iterator(chars);
   int utf16_length = 0;
   bool is_index = true;
-  uint32_t buffer = 0;
-  unibrow::Utf8::State state = unibrow::Utf8::State::kAccept;
 
-  while (cursor < size) {
-    uint32_t c = unibrow::Utf8::ValueOfIncremental(stream[cursor], &cursor,
-                                                   &state, &buffer);
-    if (c == unibrow::Utf8::kIncomplete) continue;
-
-    bool is_two_characters = c > unibrow::Utf16::kMaxNonSurrogateCharCode;
-    utf16_length += is_two_characters ? 2 : 1;
-
-    // No need to keep hashing.
-    if (utf16_length > String::kMaxHashCalcLength) break;
-    if (is_two_characters) {
-      uint16_t c1 = unibrow::Utf16::LeadSurrogate(c);
-      uint16_t c2 = unibrow::Utf16::TrailSurrogate(c);
-      hasher.AddCharacter(c1);
-      hasher.AddCharacter(c2);
-      if (is_index) is_index = hasher.UpdateIndex(c1);
-      if (is_index) is_index = hasher.UpdateIndex(c2);
-    } else {
-      hasher.AddCharacter(c);
-      if (is_index) is_index = hasher.UpdateIndex(c);
-    }
+  while (utf16_length < String::kMaxHashCalcLength && !it.Done()) {
+    utf16_length++;
+    uint16_t c = it++;
+    hasher.AddCharacter(c);
+    if (is_index) is_index = hasher.UpdateIndex(c);
   }
 
   // Now that hashing is done, we just need to calculate utf16_length
-  while (cursor < size) {
-    uint32_t c = unibrow::Utf8::ValueOfIncremental(stream[cursor], &cursor,
-                                                   &state, &buffer);
-    if (c == unibrow::Utf8::kIncomplete) continue;
-    bool is_two_characters = c > unibrow::Utf16::kMaxNonSurrogateCharCode;
-    utf16_length += is_two_characters ? 2 : 1;
-  }
-
-  uint32_t end = unibrow::Utf8::ValueOfIncrementalFinish(&state);
-  if (end) {
-    DCHECK_LT(end, unibrow::Utf16::kMaxNonSurrogateCharCode);
+  while (!it.Done()) {
+    ++it;
     utf16_length++;
   }
 
