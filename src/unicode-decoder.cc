@@ -25,7 +25,7 @@ uint16_t Utf8Iterator::operator++() {
 
   if (V8_UNLIKELY(char_ > Utf16::kMaxNonSurrogateCharCode && !trailing_)) {
     trailing_ = true;
-    return **this;
+    return Utf16::TrailSurrogate(char_);
   }
 
   trailing_ = false;
