@@ -11,26 +11,29 @@
 namespace unibrow {
 
 uint16_t Utf8Iterator::operator*() {
-  if (char_ > Utf16::kMaxNonSurrogateCharCode) {
+  if (V8_UNLIKELY(char_ > Utf16::kMaxNonSurrogateCharCode)) {
     return trailing_ ? Utf16::TrailSurrogate(char_)
                      : Utf16::LeadSurrogate(char_);
   }
+
   DCHECK_EQ(trailing_, false);
-  return static_cast<uint16_t>(char_);
+  return char_;
 }
 
 uint16_t Utf8Iterator::operator++() {
   DCHECK_EQ(this->Done(), false);
 
-  if (char_ > Utf16::kMaxNonSurrogateCharCode && !trailing_) {
+  if (V8_UNLIKELY(char_ > Utf16::kMaxNonSurrogateCharCode && !trailing_)) {
     trailing_ = true;
     return **this;
   }
+
   trailing_ = false;
   offset_ = cursor_;
 
-  char_ = Utf8::ValueOf(reinterpret_cast<const uint8_t*>(stream_.begin()) + cursor_,
-                        stream_.length() - cursor_, &cursor_);
+  char_ =
+      Utf8::ValueOf(reinterpret_cast<const uint8_t*>(stream_.begin()) + cursor_,
+                    stream_.length() - cursor_, &cursor_);
   return **this;
 }
 
@@ -51,8 +54,8 @@ void Utf8DecoderBase::Reset(uint16_t* buffer, size_t buffer_length,
   Utf8Iterator it = Utf8Iterator(stream);
   // Loop until stream is read, writing to buffer as long as buffer has space.
   while (utf16_length < buffer_length && !it.Done()) {
-    utf16_length++;
     *buffer++ = it++;
+    utf16_length++;
   }
   bytes_read_ = it.Offset();
   trailing_ = it.Trailing();
@@ -60,18 +63,20 @@ void Utf8DecoderBase::Reset(uint16_t* buffer, size_t buffer_length,
 
   // Now that writing to buffer is done, we just need to calculate utf16_length
   while (!it.Done()) {
-    utf16_length++;
     ++it;
+    utf16_length++;
   }
   utf16_length_ = utf16_length;
 }
 
-void Utf8DecoderBase::WriteUtf16Slow(uint16_t* data, size_t data_length,
-                                     Utf8Iterator* it) {
-  while (!it->Done()) {
-    DCHECK_GT(data_length, 0);
-    data_length--;
-    *data++ = (*it)++;
+void Utf8DecoderBase::WriteUtf16Slow(
+    uint16_t* data, size_t length,
+    const v8::internal::Vector<const char>& stream, size_t offset,
+    bool trailing) {
+  Utf8Iterator it = Utf8Iterator(stream, offset, trailing);
+  while (!it.Done()) {
+    DCHECK_GT(data_length--, 0);
+    *data++ = it++;
   }
 }
 

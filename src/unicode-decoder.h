@@ -6,6 +6,7 @@
 #define V8_UNICODE_DECODER_H_
 
 #include <sys/types.h>
+#include <algorithm>
 #include "src/globals.h"
 #include "src/unicode.h"
 #include "src/utils.h"
@@ -15,13 +16,13 @@ namespace unibrow {
 
 class Utf8Iterator {
  public:
-  Utf8Iterator(const v8::internal::Vector<const char>& stream)
+  explicit Utf8Iterator(const v8::internal::Vector<const char>& stream)
       : Utf8Iterator(stream, 0, false) {}
   Utf8Iterator(const v8::internal::Vector<const char>& stream, size_t offset,
                bool trailing)
       : stream_(stream), cursor_(offset), offset_(0), char_(0) {
     DCHECK_LE(offset, stream.length());
-    // Read the first char
+    // Read the first char, setting offset_ to offset in the process.
     ++*this;
 
     // This must be set after reading the first char, since the offset marks
@@ -60,7 +61,9 @@ class V8_EXPORT_PRIVATE Utf8DecoderBase {
   // The first buffer_length utf16 chars are cached in the buffer.
   void Reset(uint16_t* buffer, size_t buffer_length,
              const v8::internal::Vector<const char>& vector);
-  static void WriteUtf16Slow(uint16_t* data, size_t length, Utf8Iterator* it);
+  static void WriteUtf16Slow(uint16_t* data, size_t length,
+                             const v8::internal::Vector<const char>& stream,
+                             size_t offset, bool trailing);
 
   size_t bytes_read_;
   size_t chars_written_;
@@ -75,7 +78,7 @@ template <size_t kBufferSize>
 class Utf8Decoder : public Utf8DecoderBase {
  public:
   inline Utf8Decoder() {}
-  inline Utf8Decoder(const v8::internal::Vector<const char>& stream);
+  explicit inline Utf8Decoder(const v8::internal::Vector<const char>& stream);
   inline void Reset(const v8::internal::Vector<const char>& stream);
   inline size_t WriteUtf16(
       uint16_t* data, size_t length,
@@ -119,8 +122,8 @@ size_t Utf8Decoder<kBufferSize>::WriteUtf16(
   if (data_length <= chars_written_) return data_length;
 
   // Copy the rest the slow way.
-  Utf8Iterator it = Utf8Iterator(stream, bytes_read_, trailing_);
-  WriteUtf16Slow(data + chars_written_, data_length - chars_written_, &it);
+  WriteUtf16Slow(data + chars_written_, data_length - chars_written_, stream,
+                 bytes_read_, trailing_);
   return data_length;
 }
 
