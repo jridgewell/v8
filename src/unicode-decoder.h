@@ -7,6 +7,7 @@
 
 #include <sys/types.h>
 #include "src/globals.h"
+#include "src/unicode.h"
 #include "src/utils.h"
 #include "src/vector.h"
 
@@ -18,7 +19,7 @@ class Utf8Iterator {
       : Utf8Iterator(stream, 0, false) {}
   Utf8Iterator(const v8::internal::Vector<const char>& stream, size_t offset,
                bool trailing)
-      : stream_(stream), cursor_(offset) {
+      : stream_(stream), cursor_(offset), offset_(0), char_(0) {
     DCHECK_LE(offset, stream.length());
     // Read the first char
     ++*this;
