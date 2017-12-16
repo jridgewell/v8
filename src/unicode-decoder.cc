@@ -21,7 +21,9 @@ uint16_t Utf8Iterator::operator*() {
 }
 
 uint16_t Utf8Iterator::operator++() {
-  DCHECK_EQ(this->Done(), false);
+  if (V8_UNLIKELY(this->Done())) {
+    return char_ = Utf8::kBufferEmpty;
+  }
 
   if (V8_UNLIKELY(char_ > Utf16::kMaxNonSurrogateCharCode && !trailing_)) {
     trailing_ = true;

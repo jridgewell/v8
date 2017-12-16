@@ -20,7 +20,11 @@ class Utf8Iterator {
       : Utf8Iterator(stream, 0, false) {}
   Utf8Iterator(const v8::internal::Vector<const char>& stream, size_t offset,
                bool trailing)
-      : stream_(stream), cursor_(offset), offset_(0), char_(0) {
+      : stream_(stream),
+        cursor_(offset),
+        offset_(0),
+        char_(0),
+        trailing_(false) {
     DCHECK_LE(offset, stream.length());
     // Read the first char, setting offset_ to offset in the process.
     ++*this;
@@ -89,7 +93,7 @@ class Utf8Decoder : public Utf8DecoderBase {
 };
 
 Utf8DecoderBase::Utf8DecoderBase()
-    : bytes_read_(0), chars_written_(0), utf16_length_(0) {}
+    : bytes_read_(0), chars_written_(0), utf16_length_(0), trailing_(false) {}
 
 Utf8DecoderBase::Utf8DecoderBase(
     uint16_t* buffer, size_t buffer_length,
