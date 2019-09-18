@@ -1685,6 +1685,8 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
                           Builtins::kArrayFrom, 1, false);
     SimpleInstallFunction(isolate_, array_function, "of", Builtins::kArrayOf, 0,
                           false);
+    SimpleInstallFunction(isolate_, array_function, "alloc", Builtins::kArrayAlloc, 1,
+                          false);
 
     JSObject::AddProperty(isolate_, proto, factory->constructor_string(),
                           array_function, DONT_ENUM);

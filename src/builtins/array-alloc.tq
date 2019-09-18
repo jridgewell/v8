@@ -1,0 +1,48 @@
+// Copyright 2018 the V8 project authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+namespace array_alloc {
+  // https://tc39.github.io/ecma262/#sec-array.of
+  transitioning javascript builtin
+  ArrayAlloc(js-implicit context: Context, receiver: JSAny)(count: JSAny): JSAny {
+    try {
+      // 1. Let n be ? ToInteger(count).
+      typeswitch (ToInteger_Inline(context, count, kTruncateMinusZero)) {
+        case (n: Smi): {
+          // 4. If n < 0, throw a RangeError exception.
+          if (n < 0) goto InvalidCount;
+
+          // 6. If n is 0, return the empty Array.
+          if (n == 0 || s.length_uint32 == 0) goto EmptyArray;
+
+          if (n > 99999) goto InvalidArrayLength;
+
+          return ArrayCreate(n);
+        }
+        case (heapNum: HeapNumber): deferred {
+          assert(IsNumberNormalized(heapNum));
+          const n = LoadHeapNumberValue(heapNum);
+
+          // 4. If n < 0, throw a RangeError exception.
+          // 5. If n is +∞, throw a RangeError exception.
+          if (n == V8_INFINITY || n < 0.0) goto InvalidCount;
+
+          // 6. If n is 0, return the empty String.
+          if (s.length_uint32 == 0) goto EmptyArray;
+
+          goto InvalidArrayLength;
+        }
+      }
+    }
+    label EmptyArray {
+      return ArrayCreate(0);
+    }
+    label InvalidCount {
+      return ArrayCreate(0);
+    }
+    label InvalidArrayLength {
+      return ArrayCreate(0);
+    }
+  }
+}
